@@ -3,4 +3,4 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 adb_cmd=(adb)
 if [[ -n "${PICO_SERIAL:-}" ]]; then adb_cmd+=(-s "$PICO_SERIAL"); fi
-"${adb_cmd[@]}" install --no-incremental -r "$repo_root/artifacts/SynapathPico-Sensors-debug.apk"
+"${adb_cmd[@]}" install --no-incremental -r "$repo_root/artifacts/SynapathPico-Sensors-OpenXR-debug.apk"

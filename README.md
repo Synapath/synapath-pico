@@ -1,4 +1,10 @@
-# Synapath PICO — RGB / ToF / head-pose capture
+# Synapath PICO — OpenXR UI with RGB / ToF / head-pose capture
+
+This worktree is on `feature/openxr-main-ui`, based on main (`7cbbfd6`).
+Main and the earlier `feature/openxr-headlocked-hud` experiment are retained.
+This branch reuses all four main-branch Android pages inside a native OpenXR
+VIEW-space quad. It adds transparent recording HUD, a 2.5-second hold-to-save
+circle, and controller-ray-to-Android touch input.
 
 The main branch contains the RGB / ToF / head-pose capture implementation,
 developed on `feature/rgb-tof-headpose` from `baseline/sdk-recording-ui3`.
@@ -14,18 +20,44 @@ the app explicitly sets `KEY_OUTPUT_CAMERA_RAW_DATA=VALUE_FALSE`. Unchecking
 it requests the SDK camera RAW mode instead. This uses the official Demo's
 mode mapping; the app does not add a separate image-remapping pass.
 
-The app is **Synapath PICO Sensors**, package `com.synapath.picosensors`.
+The app is **Synapath PICO Sensors XR**, package `com.synapath.picosensors.openxr`,
+version `0.1.1-sensors-xr.1`. The other apps remain independently installable.
 It installs alongside both stable and application-encoding experiment apps.
 Stop other camera apps before launching this probe.
 
 ```sh
 PICO_DEV_IMAGE=operator-origin-dev:local make build
 make install
-adb shell pm grant com.synapath.picosensors android.permission.CAMERA
-adb shell pm grant com.synapath.picosensors android.permission.RECORD_AUDIO
-adb shell pm grant com.synapath.picosensors com.picovr.permission.SPATIAL_DATA
-adb shell am start -n com.synapath.picosensors/com.picoxr.capturesdkdemo.MainActivity
+adb shell pm grant com.synapath.picosensors.openxr android.permission.CAMERA
+adb shell pm grant com.synapath.picosensors.openxr android.permission.RECORD_AUDIO
+adb shell pm grant com.synapath.picosensors.openxr com.picovr.permission.SPATIAL_DATA
+adb shell am start -n com.synapath.picosensors.openxr/com.picoxr.capturesdkdemo.MainActivity
 ```
+
+The new APK requests camera, microphone and SPATIAL_DATA permissions itself.
+Denying the spatial permission prevents the combined sensor recording from starting.
+Build output: `artifacts/SynapathPico-Sensors-OpenXR-debug.apk`.
+
+The Docker build also compiles the JNI renderer with NDK 28.1.13356709.
+Place the local PICO loader 3.0.0-20250422 at
+`third_party/pico/openxr/arm64-v8a/libopenxr_loader.so` (ignored).
+SHA256: `79882748101e096550f9eccac59f4c4ea6eb99c500001975abe7736bb54d4033`.
+Public headers are pinned to Khronos OpenXR-SDK release-1.1.46; its license is
+included under `third_party/openxr/`.
+
+The main Android layout renders to double-buffered 1600×900 textures at about
+10 Hz; the preview uses PixelCopy from the existing SDK SurfaceView. The reticle
+is drawn separately on the native XR thread at the runtime's frame cadence
+(observed around 90 Hz on this device). During recording the full panel and
+preview are hidden, leaving timer and hold circle over real-world passthrough.
+These display refresh rates do not set RGB recording cadence. All recorded
+tracks still come from SDK startRecord, with no app-side RGB re-encoding.
+
+Android view caches and snapshot bitmaps use the same 240-dpi density to avoid
+HUD clipping. Controller aim is located in LOCAL space and transformed into VIEW;
+the initial implementation returned fixed center coordinates. Explicit pose-state
+queries and the LOCAL-to-VIEW conversion corrected controller movement in tests.
+The front end currently supports controller ray/trigger input, not hand pinch.
 
 After Stop, version `0.1.1-sensors.3` preserves PXR's existing common timeline
 and publishes `/sdcard/Movies/Synapath/Synapath-*.mp4`. No cropping, timestamp
@@ -80,3 +112,34 @@ at about 5 Hz (76 distinct samples). A stationary off-head trial produced depth
 at about 1 Hz; a later moving off-head trial also reached 5 Hz. Wearing state
 alone does not explain the rate. This branch does not force ToF to stay at 5 Hz.
 See [SDK capability findings](docs/sensor-capabilities.md).
+
+
+## OpenXR validation — 2026-11-26
+
+PICO 4 Ultra Enterprise, firmware 5.15.8. Docker debug build and installation
+passed. The user confirmed the pages can be switched, the reticle moves smoothly,
+and the timer and entire circle are visible. Continuous 2.5-second controller
+hold stopped and saved recordings. Preview resumed after final save.
+
+The reticle follows the last trigger-selected hand (right by default), rather
+than jumping to a passive controller between hover and press. In a fresh install,
+SPATIAL_DATA is requested together with camera and audio; the Android 14-compatible
+permission callback initializes capture after all three grants.
+
+A 144.5-second SDK recording contained 8,671 RGB frames (60.0 fps), 720 depth
+frames at 4.99979 Hz and 146,846 finite pose packets. All timestamps increased.
+The sensor packet rate is an output rate, not independent pose-measurement rate.
+
+The final saved test contained 678 RGB frames at 60.000002 fps, 54 depth frames
+at 4.99977 Hz, and 10,948 pose packets. The app verified the RGB/ToF/Pose common
+vendor time base, applied zero timestamp shift and trimming, and verified a
+byte-identical MediaStore copy by SHA-256. The separately pulled calibration
+passed `scripts/verify-calibration.py`: preserved RAW coefficients, actual
+undistorted intrinsics matching the MP4, and matching video SHA-256.
+
+Local ignored evidence is under `artifacts/main-ui-xr-test/`: final video,
+calibration, timeline audit, extracted sensor summary and device logs.
+This branch is not merged or pushed. The original SDK configuration, MP4
+inspection/copy implementation, calibration parser and Android page XML are
+retained from main. XR changes affect display, touch routing, permission handling
+and preview restoration.

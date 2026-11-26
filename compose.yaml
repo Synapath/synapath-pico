@@ -1,4 +1,4 @@
-name: synapath-pico-sensors
+name: synapath-pico-sensors-openxr
 services:
   dev:
     image: ${PICO_DEV_IMAGE:-synapath-pico-dev:local}

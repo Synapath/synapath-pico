@@ -14,3 +14,5 @@
 /xr/.kotlin/
 /data/
 /third_party/pico/*.aar
+/third_party/pico/openxr/
+/xr/app/src/main/jniLibs/

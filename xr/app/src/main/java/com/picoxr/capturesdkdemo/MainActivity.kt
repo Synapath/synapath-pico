@@ -1,6 +1,8 @@
 package com.picoxr.capturesdkdemo
 
 import android.Manifest
+import android.content.Context
+import android.content.res.Configuration
 import android.media.ImageReader
 import android.os.Bundle
 import android.os.Environment
@@ -8,6 +10,7 @@ import android.content.ContentValues
 import android.provider.MediaStore
 import java.util.concurrent.Executors
 import com.picoxr.capturesdkdemo.timeline.PicoTimeline
+import com.picoxr.capturesdkdemo.xr.OpenXrUiHost
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -37,6 +40,13 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
+    override fun attachBaseContext(base: Context) {
+        val config = Configuration(base.resources.configuration).apply { densityDpi = 240; fontScale = 1f }
+        super.attachBaseContext(base.createConfigurationContext(config))
+    }
+
+    private lateinit var xrUi: OpenXrUiHost
+
     private lateinit var imageReader: ImageReader
 
     @Volatile private var pxrCapture: PXRCapture? = null
@@ -60,6 +70,7 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var finalizing = false
 
     private fun renderFinalizing() {
+        if (::xrUi.isInitialized) xrUi.setSaving()
         findViewById<TextView>(R.id.preview_message).apply {
             visibility = View.VISIBLE
             text = "正在保存 RGB / ToF / Pose\n保留相机原始时间轴，完成后自动恢复预览"
@@ -157,6 +168,14 @@ class MainActivity : AppCompatActivity() {
             uiHandler.removeCallbacks(recordingTimer)
             findViewById<TextView>(R.id.session_status).text = "录制结束 · 可在文件管理器查看视频"
         }
+        if (::xrUi.isInitialized) xrUi.setRecording(recording)
+        if (!recording && resumePreviewAfterRecord && state == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal) {
+            uiHandler.postDelayed({
+                if (!finalizing && !isDestroyed && resumePreviewAfterRecord &&
+                    captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal &&
+                    surfaceView.holder.surface.isValid) startPreview()
+            }, 250)
+        }
     }
 
 
@@ -165,6 +184,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         Log.i(TAG, "onCreate")
         surfaceView = findViewById(R.id.surfaceView)
+        xrUi = OpenXrUiHost(this, surfaceView) { stopRecord() }
         // Keep the SDK render target aligned and independent from fractional
         // layout sizes (e.g. 813x305 px in the current floating window).
         surfaceView.holder.setFixedSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
@@ -196,6 +216,8 @@ class MainActivity : AppCompatActivity() {
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback2 {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.i(TAG, "surfaceCreated")
+                if (resumePreviewAfterRecord && !finalizing && captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal)
+                    uiHandler.post { if (!isDestroyed && !finalizing) startPreview() }
             }
 
             override fun surfaceChanged(
@@ -219,7 +241,8 @@ class MainActivity : AppCompatActivity() {
 
         val permissions = arrayOf(
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.CAMERA
+            Manifest.permission.CAMERA,
+            "com.picovr.permission.SPATIAL_DATA"
         )
         val checkCode: Int = PermissionUtils.checkPermission(this, permissions, true)
         if (checkCode == PermissionUtils.CHECK_RESULT_OK) {
@@ -231,11 +254,16 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
-        grantResults: IntArray,
-        deviceId: Int
+        grantResults: IntArray
     ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults, deviceId)
-        initPXRCapture(checkBox.isChecked)
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val required = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO, "com.picovr.permission.SPATIAL_DATA")
+        if (required.all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+            if (pxrCapture == null && !isDestroyed) initPXRCapture(checkBox.isChecked)
+        } else {
+            findViewById<TextView>(R.id.capture_status).text = "采集权限未完整授予"
+            findViewById<TextView>(R.id.session_status).text = "需要相机、麦克风和空间数据权限，请在系统设置中授予后重新打开"
+        }
     }
 
     private fun initPXRCapture(undistorted: Boolean, preservedOriginal: JSONObject? = null, skipOriginalProbe: Boolean = false){
@@ -278,9 +306,8 @@ class MainActivity : AppCompatActivity() {
                     if (state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_CAPTURING.ordinal) {
                         resumePreviewAfterRecord = true
                     } else if (state == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal && resumePreviewAfterRecord) {
-                        resumePreviewAfterRecord = false
                         uiHandler.postDelayed({
-                            if (captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal && !isDestroyed) startPreview()
+                            if (!finalizing && captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal && !isDestroyed) startPreview()
                         }, 150)
                     }
                 }
@@ -296,6 +323,7 @@ class MainActivity : AppCompatActivity() {
                     uiHandler.removeCallbacks(recordingTimer)
                     findViewById<TextView>(R.id.capture_status).text = "相机错误 $error"
                     findViewById<TextView>(R.id.session_status).text = "采集失败，请重新打开应用"
+                    xrUi.setRecording(false)
                 }
             }
 
@@ -623,6 +651,7 @@ class MainActivity : AppCompatActivity() {
             PXRCapture.PXRCaptureRenderMode.PXRCapture_RenderMode_3D.ordinal,
             PREVIEW_WIDTH, PREVIEW_HEIGHT)
         previewAttached = result != null && result > 0
+        if (previewAttached) resumePreviewAfterRecord = false
         Log.i(TAG, "startPreview attached=$previewAttached result=$result buffer=${PREVIEW_WIDTH}x${PREVIEW_HEIGHT} view=${surfaceView.width}x${surfaceView.height}")
     }
 
@@ -632,9 +661,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (::xrUi.isInitialized) xrUi.pause()
         uiHandler.removeCallbacksAndMessages(null)
         finalizeWorker.shutdown()
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::xrUi.isInitialized) xrUi.resume()
+    }
+
+    override fun onPause() {
+        if (::xrUi.isInitialized) xrUi.pause()
+        super.onPause()
     }
 
     companion object {

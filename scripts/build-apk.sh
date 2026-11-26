@@ -7,7 +7,9 @@ image="${PICO_DEV_IMAGE:-synapath-pico-dev:local}"
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker compose build dev
 fi
-docker compose run --rm dev bash -c 'cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
+docker volume create synapath-pico_gradle-cache >/dev/null
+docker volume create synapath-pico_debug-signing >/dev/null
+docker compose run --rm dev bash -c './scripts/build-openxr-native.sh && cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
 mkdir -p artifacts
-cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-Sensors-debug.apk
-printf '%s\n' "$repo_root/artifacts/SynapathPico-Sensors-debug.apk"
+cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-Sensors-OpenXR-debug.apk
+printf '%s\n' "$repo_root/artifacts/SynapathPico-Sensors-OpenXR-debug.apk"
