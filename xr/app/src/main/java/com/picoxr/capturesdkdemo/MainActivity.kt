@@ -7,7 +7,7 @@ import android.os.Environment
 import android.content.ContentValues
 import android.provider.MediaStore
 import java.util.concurrent.Executors
-import com.picoxr.capturesdkdemo.timeline.Mp4TimelineAligner
+import com.picoxr.capturesdkdemo.timeline.PicoTimeline
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -39,7 +39,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var imageReader: ImageReader
 
-    private var pxrCapture: PXRCapture? = null
+    @Volatile private var pxrCapture: PXRCapture? = null
 
     private lateinit var btnCapture: Button
     private lateinit var btnStartRecord: Button
@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity() {
     private fun renderFinalizing() {
         findViewById<TextView>(R.id.preview_message).apply {
             visibility = View.VISIBLE
-            text = "正在统一 RGB / ToF / Pose 时间轴\n保存完成后自动恢复预览"
+            text = "正在保存 RGB / ToF / Pose\n保留相机原始时间轴，完成后自动恢复预览"
         }
         btnStartRecord.isEnabled = false
         btnStopRecord.isEnabled = false
@@ -71,11 +71,17 @@ class MainActivity : AppCompatActivity() {
         btnStopPreview.isEnabled = false
         btnGetCameraParam.isEnabled = false
         checkBox.isEnabled = false
-        findViewById<TextView>(R.id.capture_status).text = "正在对齐保存"
-        findViewById<TextView>(R.id.session_status).text = "统一 RGB / ToF / Pose 时间轴，请稍候…"
+        findViewById<TextView>(R.id.capture_status).text = "正在校验保存"
+        findViewById<TextView>(R.id.session_status).text = "保留原始时间戳，正在校验录像完整性…"
     }
     private var previewAttached = false
     private var calibrationJson: JSONObject? = null
+    private var calibrationCharacteristics: JSONObject? = null
+    @Volatile private var configuredUndistorted = true
+    private var originalCalibration: JSONObject? = null
+    @Volatile private var probingOriginalCalibration = false
+    private var probeConfigurationReady = false
+    private var pendingCalibration: JSONObject? = null
     private var resumePreviewAfterRecord = false
     private val recordingTimer = object : Runnable {
         override fun run() {
@@ -110,6 +116,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderCaptureState(state: Int) {
         if (finalizing) { renderFinalizing(); return }
+        if (probingOriginalCalibration) {
+            listOf(btnStartRecord, btnStopRecord, btnCapture, btnStartPreview, btnStopPreview, btnGetCameraParam).forEach { it.isEnabled = false }
+            checkBox.isEnabled = false
+            findViewById<Button>(R.id.btn_export_calibration).isEnabled = false
+            findViewById<TextView>(R.id.capture_status).text = "正在读取两套标定"
+            findViewById<TextView>(R.id.preview_message).apply { visibility = View.VISIBLE; text = "正在读取原始相机标定\n完成后恢复去畸变模式" }
+            return
+        }
         btnStopRecord.isEnabled = true
         val recording = state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_CAPTURING.ordinal
         val previewing = state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_PREVIEWING.ordinal
@@ -210,7 +224,7 @@ class MainActivity : AppCompatActivity() {
         val checkCode: Int = PermissionUtils.checkPermission(this, permissions, true)
         if (checkCode == PermissionUtils.CHECK_RESULT_OK) {
             Log.i(TAG, "checkPermission OK")
-            initPXRCapture(false)
+            initPXRCapture(checkBox.isChecked)
         }
     }
 
@@ -221,12 +235,24 @@ class MainActivity : AppCompatActivity() {
         deviceId: Int
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults, deviceId)
-        initPXRCapture(false)
+        initPXRCapture(checkBox.isChecked)
     }
 
-    private fun initPXRCapture(check:Boolean){
+    private fun initPXRCapture(undistorted: Boolean, preservedOriginal: JSONObject? = null, skipOriginalProbe: Boolean = false){
         Log.i(TAG, "initPXRCapture")
-        pxrCapture = PXRCapture()
+        val capture = PXRCapture()
+        pxrCapture = capture
+        configuredUndistorted = false
+        probingOriginalCalibration = undistorted && !skipOriginalProbe
+        probeConfigurationReady = false
+        runOnUiThread {
+            originalCalibration = preservedOriginal?.let { JSONObject(it.toString()) }
+            calibrationCharacteristics = null
+            calibrationJson = null
+            findViewById<LinearLayout>(R.id.calibration_cards).removeAllViews()
+            findViewById<Button>(R.id.btn_export_calibration).isEnabled = false
+            tvCameraParam.text = "正在读取原始标定与当前输出参数…"
+        }
         val cameraParams= mutableMapOf<String, String>(
             PXRCapture.KEY_MCTF to PXRCapture.VALUE_TRUE,
             PXRCapture.KEY_EIS to PXRCapture.VALUE_TRUE,
@@ -234,11 +260,21 @@ class MainActivity : AppCompatActivity() {
         )
         pxrCapture?.setCallback(object :PXRCaptureCallBack{
             override fun captureOnStateChanged(state: Int) {
+                if (pxrCapture !== capture) return
 
                 Log.i(TAG, "captureOnStateChanged state: $state")
                 captureState = state
                 runOnUiThread {
+                    if (pxrCapture !== capture) return@runOnUiThread
                     renderCaptureState(state)
+                    if (state == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal && !finalizing) {
+                        if (probingOriginalCalibration) {
+                            probeConfigurationReady = true
+                            finishOriginalCalibrationProbe(capture)
+                        } else uiHandler.post {
+                            if (pxrCapture === capture && !finalizing && recordingSince == 0L) getCameraParams()
+                        }
+                    }
                     if (state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_CAPTURING.ordinal) {
                         resumePreviewAfterRecord = true
                     } else if (state == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal && resumePreviewAfterRecord) {
@@ -249,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 if (captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CAMERA_OPENED.ordinal){
-                    captureConfig(check)
+                    captureConfig(if (probingOriginalCalibration) false else undistorted)
                 }
             }
 
@@ -277,7 +313,24 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun captureOnCharacteristicsCallback(characteristics: PXRCharacteristics) {
-                Log.i(TAG, "SDK 0.1.1 characteristics: $characteristics")
+                if (pxrCapture !== capture) return
+                val callbackUndistorted = configuredUndistorted
+                val snapshot = CalibrationSnapshot.characteristics(characteristics, callbackUndistorted, RECORD_WIDTH, RECORD_HEIGHT)
+                runOnUiThread {
+                    if (pxrCapture !== capture) return@runOnUiThread
+                    calibrationCharacteristics = snapshot
+                    if (!callbackUndistorted) originalCalibration = JSONObject(snapshot.toString())
+                    if (probingOriginalCalibration) {
+                        finishOriginalCalibrationProbe(capture)
+                        return@runOnUiThread
+                    }
+                    if (!finalizing && recordingSince == 0L && captureState in listOf(
+                            PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal,
+                            PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_PREVIEWING.ordinal)) {
+                        uiHandler.post { if (pxrCapture === capture && !finalizing && recordingSince == 0L) getCameraParams() }
+                    }
+                }
+                Log.i(TAG, "CALIBRATION_CHARACTERISTICS $snapshot")
             }
 
             override fun captureOnTakePictureTimeOut() {
@@ -286,11 +339,36 @@ class MainActivity : AppCompatActivity() {
 
         })
         pxrCapture?.openCameraAsync(cameraParams)
+        uiHandler.postDelayed({
+            if (pxrCapture === capture && probingOriginalCalibration && probeConfigurationReady) {
+                Log.w(TAG, "Original calibration callback timed out; restore requested output with unavailable flag")
+                finishOriginalCalibrationProbe(capture, true)
+            }
+        }, 5000)
+    }
 
+    private fun finishOriginalCalibrationProbe(capture: PXRCapture, timeout: Boolean = false) {
+        if (!probingOriginalCalibration || !probeConfigurationReady || (!timeout && originalCalibration == null)) return
+        probingOriginalCalibration = false
+        probeConfigurationReady = false
+        calibrationCharacteristics = null
+        calibrationJson = null
+        uiHandler.post {
+            if (pxrCapture === capture) {
+                Log.i(TAG, "CALIBRATION_PROBE_COMPLETE rawAvailable=${originalCalibration?.optBoolean("available")} restoringUndistorted=true")
+                val original = originalCalibration?.let { JSONObject(it.toString()) }
+                releaseCamera()
+                // reset alone retains RAW-only characteristic keys in this firmware.
+                // Reopen a fresh client so output distortion/model fields cannot be stale.
+                initPXRCapture(true, original, true)
+            }
+        }
     }
 
     private fun releaseCamera(){
-        pxrCapture?.run {
+        val capture = pxrCapture
+        pxrCapture = null // Ignore reset/close callbacks from the old session.
+        capture?.run {
             stopPreview()
             stopRecord()
             reset()
@@ -300,78 +378,49 @@ class MainActivity : AppCompatActivity() {
         pxrCapture = null
     }
 
-    private fun captureConfig(check: Boolean){
-        Log.i(TAG, "captureConfig: $check")
+    private fun captureConfig(undistorted: Boolean){
+        configuredUndistorted = undistorted
+        Log.i(TAG, "captureConfig undistorted=$undistorted outputCameraRawData=${!undistorted}")
         val configureParams = mutableMapOf(
             PXRCapture.KEY_ENABLE_MVHEVC to PXRCapture.VALUE_FALSE,
+            PXRCapture.KEY_OUTPUT_CAMERA_RAW_DATA to
+                if (undistorted) PXRCapture.VALUE_FALSE else PXRCapture.VALUE_TRUE,
             PXRCapture.KEY_VIDEO_FPS to  "60",
             PXRCapture.KEY_WRITE_DEPTH_DATA to PXRCapture.VALUE_TRUE,
             PXRCapture.KEY_WRITE_POSE_DATA to PXRCapture.VALUE_TRUE,
             PXRCapture.KEY_WRITE_CAMERA_PARAMS_DATA to PXRCapture.VALUE_TRUE,
-            PXRCapture.KEY_VIDEO_WIDTH to "2048",
-            PXRCapture.KEY_VIDEO_HEIGHT to "${1536/2}",
+            PXRCapture.KEY_VIDEO_WIDTH to RECORD_WIDTH.toString(),
+            PXRCapture.KEY_VIDEO_HEIGHT to RECORD_HEIGHT.toString(),
             PXRCapture.KEY_VIDEO_BITRATE to "${10 * 1024 * 1024}",
         )
-        if (!check){
-            configureParams.put("output-camera-raw-data", PXRCapture.VALUE_TRUE)
-        }
         pxrCapture?.configure(configureParams)
     }
 
     private fun getCameraParams() {
-        val cameraIntrinsics = DoubleArray(4)
-        val len = IntArray(1)
-        pxrCapture?.getCameraIntrinsics(
-            VIDEO_WIDTH,
-            VIDEO_HEIGHT,
-            VIDEO_H_FOV,
-            VIDEO_V_FOV,
-            cameraIntrinsics,
-            len
-        )
-
-        val leftCameraExtrinsics = DoubleArray(16)
-        val leftCameraExtrinsicsLen = IntArray(1)
-        val rightCameraExtrinsics = DoubleArray(16)
-        val rightCameraExtrinsicsLen = IntArray(1)
-        pxrCapture?.getCameraExtrinsics(
-            leftCameraExtrinsics, leftCameraExtrinsicsLen,
-            rightCameraExtrinsics, rightCameraExtrinsicsLen
-        )
-
-        Log.i(
-            TAG,
-            "cameraIntrinsics len: " + len[0] + " value: " + cameraIntrinsics.contentToString()
-        )
-        Log.i(
-            TAG,
-            "leftCameraExtrinsics len: " + leftCameraExtrinsicsLen[0] + " value: " + leftCameraExtrinsics.contentToString()
-        )
-        Log.i(
-            TAG,
-            "rightCameraExtrinsics len: " + rightCameraExtrinsicsLen[0] + " value: " + rightCameraExtrinsics.contentToString()
-        )
-
-        val intrinsicCount = len[0].coerceIn(0, cameraIntrinsics.size)
-        val leftCount = leftCameraExtrinsicsLen[0].coerceIn(0, leftCameraExtrinsics.size)
-        val rightCount = rightCameraExtrinsicsLen[0].coerceIn(0, rightCameraExtrinsics.size)
-        calibrationJson = JSONObject().apply {
-            put("source", "PXRCapture spatial-video parameter queries")
-            put("query_width", VIDEO_WIDTH); put("query_height", VIDEO_HEIGHT)
-            put("query_hfov", VIDEO_H_FOV); put("query_vfov", VIDEO_V_FOV)
-            put("intrinsics", JSONArray(cameraIntrinsics.take(intrinsicCount)))
-            put("left_extrinsics", JSONArray(leftCameraExtrinsics.take(leftCount)))
-            put("right_extrinsics", JSONArray(rightCameraExtrinsics.take(rightCount)))
-        }
-        renderCalibration(cameraIntrinsics.take(intrinsicCount),
-            leftCameraExtrinsics.take(leftCount), rightCameraExtrinsics.take(rightCount))
+        val capture = pxrCapture ?: return
+        if (finalizing || recordingSince != 0L || captureState !in listOf(
+                PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal,
+                PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_PREVIEWING.ordinal)) return
+        if (probingOriginalCalibration) return
+        val output = CalibrationSnapshot.output(calibrationCharacteristics, configuredUndistorted, RECORD_WIDTH, RECORD_HEIGHT)
+        val raw = originalCalibration
+            ?: JSONObject().put("available", false).put("status", "RAW-mode SDK callback not received")
+        val snapshot = JSONObject().put("schema", 2).put("sdk", "capturelib-0.1.1")
+            .put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+            .put("firmware", Build.DISPLAY)
+            .put("captured_at_unix_ms", System.currentTimeMillis())
+            .put("raw_camera_calibration", JSONObject(raw.toString()))
+            .put("output_image_parameters", output)
+        calibrationJson = snapshot
+        renderCalibration(snapshot)
+        Log.i(TAG, "CALIBRATION_SNAPSHOT rawAvailable=${raw.optBoolean("available")} outputAvailable=${output.optBoolean("available")} outputMode=${output.optString("image_mode")}")
     }
 
-    private fun renderCalibration(intrinsics: List<Double>, left: List<Double>, right: List<Double>) {
+    private fun renderCalibration(snapshot: JSONObject) {
         val cards = findViewById<LinearLayout>(R.id.calibration_cards)
         cards.removeAllViews()
-        tvCameraParam.text = "空间视频参数 · 2048 × 1536 · 数值显示已舍入，JSON 保留原精度"
-        fun card(title: String, values: List<Double>, matrix: Boolean) {
+        tvCameraParam.text = "原始标定 + 输出参数 · 双目 ${RECORD_WIDTH}×${RECORD_HEIGHT} / 单眼 ${RECORD_WIDTH / 2}×${RECORD_HEIGHT}\n显示已舍入，JSON 保留完整精度与原始标定字节"
+        fun card(title: String, body: String) {
             val container = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(18, 14, 18, 14)
@@ -379,35 +428,70 @@ class MainActivity : AppCompatActivity() {
             }
             cards.addView(container, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = 12 })
             container.addView(TextView(this).apply {
-                text = "$title   ·   ${values.size} 项"
-                setTextColor(Color.parseColor("#EAAE50")); textSize = 15f
+                text = title; textSize = 15f; setTextColor(Color.parseColor("#EAAE50"))
             })
-            val formatted = if (matrix && values.size == 16) {
-                values.chunked(4).joinToString("\n") { row ->
-                    row.joinToString("   ") { String.format(Locale.US, "% .5f", it) }
-                }
-            } else values.mapIndexed { index, value ->
-                "P$index    ${String.format(Locale.US, "%.5f", value)}"
-            }.joinToString("\n")
             container.addView(TextView(this).apply {
-                text = formatted.ifEmpty { "SDK 尚未返回有效数据" }
-                typeface = Typeface.MONOSPACE; textSize = 14f
-                setTextColor(Color.parseColor("#EAF0F5")); setPadding(0, 10, 0, 0)
-                setTextIsSelectable(true)
+                text = body; textSize = 14f; setPadding(0, 10, 0, 0)
+                setTextColor(Color.parseColor("#EAF0F5")); setTextIsSelectable(true)
             })
         }
-        card("空间视频内参", intrinsics, false)
-        card("左相机外参 · 4 × 4 数组视图", left, true)
-        card("右相机外参 · 4 × 4 数组视图", right, true)
+        fun values(array: JSONArray?): String {
+            if (array == null || array.length() == 0) return "SDK 未提供"
+            return (0 until array.length()).chunked(4).joinToString("\n") { row ->
+                row.joinToString("   ") { i ->
+                    val value = array.optDouble(i)
+                    if (value.isFinite()) String.format(Locale.US, "%.5f", value) else "无效"
+                }
+            }
+        }
+        val raw = snapshot.getJSONObject("raw_camera_calibration")
+        card("原始模式标定 · SDK 回调 · 单眼 ${RECORD_WIDTH / 2}×${RECORD_HEIGHT}", "模型：${raw.optString("camera_model", "未知")}\n畸变模型：${raw.optString("distortion_model", "未知")}\n内参与畸变系数对应原始相机，不直接用于去畸变输出")
+        listOf("intrinsics" to "原始内参", "extrinsics" to "原始外参", "distortion_coefficients" to "原始畸变系数").forEach { (key, label) ->
+            val array = raw.optJSONObject(key)?.optJSONArray("packed_values")
+            card("$label · SDK 打包数组（${array?.length() ?: 0} 项）", values(array))
+        }
+        val output = snapshot.getJSONObject("output_image_parameters")
+        val cameras = output.optJSONArray("cameras")
+        card("当前输出 · ${if (configuredUndistorted) "去畸变" else "相机 RAW"}",
+            "直接读取该模式的 SDK 回调参数；未使用固定 FOV 推算\n单眼 ${RECORD_WIDTH / 2}×${RECORD_HEIGHT} · 物理投影仍待独立验证")
+        if (cameras != null) for (i in 0 until cameras.length()) {
+            val camera = cameras.getJSONObject(i)
+            card("输出内参 · SDK 相机索引 $i", "fx %.5f    fy %.5f\ncx %.5f    cy %.5f".format(
+                camera.getDouble("fx"), camera.getDouble("fy"), camera.getDouble("cx"), camera.getDouble("cy")))
+        } else card("输出内参", "SDK 未返回可解析的双目标定")
+        card("输出外参 · SDK 打包数组", values(output.optJSONObject("extrinsics")?.optJSONArray("packed_values")))
         findViewById<Button>(R.id.btn_export_calibration).isEnabled = true
     }
 
+    private fun publishCalibration(json: JSONObject, name: String): android.net.Uri {
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, "application/json")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/Synapath/Calibrations")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("无法创建标定文件")
+        try {
+            contentResolver.openOutputStream(uri, "w")!!.bufferedWriter().use { it.write(json.toString(2)) }
+            check(contentResolver.update(uri, ContentValues().apply {
+                put(MediaStore.Downloads.IS_PENDING, 0)
+            }, null, null) == 1) { "无法发布标定文件" }
+            return uri
+        } catch (error: Exception) {
+            contentResolver.delete(uri, null, null)
+            throw error
+        }
+    }
+
     private fun exportCalibration() {
+        getCameraParams()
         val json = calibrationJson ?: return
         try {
-            val output = File(getExternalFilesDir(null), "camera-calibration.json")
-            output.writeText(json.toString(2))
-            tvCameraParam.text = "原始精度已导出至 ${output.absolutePath}"
+            val name = "camera-calibration-${System.currentTimeMillis()}.json"
+            val uri = publishCalibration(json, name)
+            tvCameraParam.text = "两套参数已导出至 /sdcard/Download/Synapath/Calibrations/$name"
+            Log.i(TAG, "CALIBRATION_EXPORTED uri=$uri name=$name")
         } catch (error: Exception) {
             tvCameraParam.text = "导出失败：${error.message}"
         }
@@ -425,6 +509,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecord(){
+        if (probingOriginalCalibration) return
+        getCameraParams()
+        val snapshot = calibrationJson
+        if (snapshot == null || !snapshot.getJSONObject("raw_camera_calibration").optBoolean("available") ||
+            !snapshot.getJSONObject("output_image_parameters").optBoolean("available")) {
+            findViewById<TextView>(R.id.session_status).text = "两套标定尚未就绪，请稍候或重新打开相机"
+            return
+        }
+        pendingCalibration = JSONObject(snapshot.toString())
         stopPreview()
         val pending = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), ".SynapathPending")
         if (!pending.exists() && !pending.mkdirs()) {
@@ -440,6 +533,7 @@ class MainActivity : AppCompatActivity() {
         val result = pxrCapture?.startRecord(filePath)
         Log.i(TAG, "startRecord result=$result")
         if (result == null || result <= 0) {
+            pendingRecordPath = ""
             findViewById<TextView>(R.id.session_status).text = "启动录像失败，请重试"
             File(filePath).takeIf { it.exists() && it.length() == 0L }?.delete()
             startPreview()
@@ -454,17 +548,17 @@ class MainActivity : AppCompatActivity() {
         renderFinalizing()
         val source = File(pendingRecordPath)
         val finalName = lastRecordPath
+        val recordingCalibration = pendingCalibration?.let { JSONObject(it.toString()) }
+            ?: JSONObject().put("schema", 2).put("status", "calibration_unavailable_at_record_start")
         finalizeWorker.execute {
             var uri: android.net.Uri? = null
-            var temp: File? = null
+            var calibrationUri: android.net.Uri? = null
             try {
                 val result = pxrCapture?.stopRecord() ?: 0
                 check(result > 0) { "SDK stopRecord=$result" }
-                // The original recording remains retained; only the aligned file
-                // is published to the normal video collection.
-                temp = File(getExternalFilesDir("alignment"), finalName)
-                check(!temp.exists()) { "临时输出文件已存在" }
-                val aligned = Mp4TimelineAligner.align(source, temp)
+                // PXR already maps all streams to a common timeline. Inspect it
+                // without cropping, independently zeroing tracks, or remuxing.
+                val timeline = PicoTimeline.inspect(source)
                 val values = ContentValues().apply {
                     put(MediaStore.Video.Media.DISPLAY_NAME, finalName)
                     put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -473,27 +567,50 @@ class MainActivity : AppCompatActivity() {
                 }
                 uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
                     ?: error("无法创建输出视频")
-                contentResolver.openOutputStream(uri, "w")!!.use { output -> temp.inputStream().use { it.copyTo(output) } }
-                contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
-                Log.i(TAG, "ALIGNED_SAVED uri=$uri name=$finalName $aligned raw=${source.absolutePath}")
+                val sourceHash = contentResolver.openOutputStream(uri, "w")!!.use { output ->
+                    PicoTimeline.copyUnchanged(source, output)
+                }
+                val publishedHash = contentResolver.openInputStream(uri)!!.use { PicoTimeline.sha256(it) }
+                check(sourceHash == publishedHash) { "录像完整性校验失败" }
+                val calibrationName = finalName.removeSuffix(".mp4") + ".calibration.json"
+                recordingCalibration.put("video_name", finalName)
+                    .put("source_mp4_sha256", sourceHash)
+                    .put("timeline_vendor_tbtm_us", timeline.baseUs)
+                calibrationUri = publishCalibration(recordingCalibration, calibrationName)
+                val summary = JSONObject(timeline.json())
+                    .put("calibration_uri", calibrationUri.toString())
+                    .put("calibration_path", "/sdcard/Download/Synapath/Calibrations/$calibrationName")
+                    .put("source_file", source.absolutePath)
+                    .put("published_name", finalName)
+                    .put("sha256", sourceHash)
+                    .put("published_byte_identical", true)
+                File(getExternalFilesDir("timelines"), finalName.removeSuffix(".mp4") + ".json")
+                    .writeText(summary.toString(2))
+                check(contentResolver.update(uri, ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }, null, null) == 1) { "无法发布录像" }
+                Log.i(TAG, "PXR_TIMELINE_SAVED uri=$uri name=$finalName summary=$summary")
                 pendingRecordPath = ""
                 finalizing = false
                 runOnUiThread {
                     renderCaptureState(captureState)
                     findViewById<TextView>(R.id.session_path).text = "/sdcard/Movies/Synapath/$finalName"
                     findViewById<TextView>(R.id.session_status).text =
-                        "已对齐保存 · RGB ${aligned.rgb} / ToF ${aligned.depth} / Pose ${aligned.pose} · 起点裁剪 %.3f 秒".format(aligned.originUs / 1e6)
+                        if (timeline.sharedTimebase)
+                            "已保存 · 共同时钟已核对 · RGB ${timeline.samples("rgb")} / ToF ${timeline.samples("depth")} / Pose ${timeline.samples("pose")} · 时间戳原样保留"
+                        else "已保存 · 时间基准或传感器轨道需检查 · 原始录像完整保留"
                 }
             } catch (error: Exception) {
                 uri?.let { contentResolver.delete(it, null, null) }
-                Log.e(TAG, "Alignment failed; original retained at $source", error)
+                calibrationUri?.let { contentResolver.delete(it, null, null) }
+                Log.e(TAG, "Save verification failed; original retained at $source", error)
                 finalizing = false
                 runOnUiThread {
                     renderCaptureState(captureState)
-                    findViewById<TextView>(R.id.session_status).text = "对齐保存失败，原始录像已保留：${error.message}"
+                    findViewById<TextView>(R.id.session_status).text = "校验保存失败，原始录像已保留：${error.message}"
                     findViewById<TextView>(R.id.session_path).text = source.absolutePath
                 }
-            } finally { temp?.delete() }
+            }
         }
     }
 
@@ -527,10 +644,8 @@ class MainActivity : AppCompatActivity() {
         const val PERFORMANCE_MODE: Int = 2
         const val PREVIEW_WIDTH: Int = 1280
         const val PREVIEW_HEIGHT: Int = 480
-        const val VIDEO_WIDTH: Int = 2048
-        const val VIDEO_HEIGHT: Int = 1536
-        const val VIDEO_H_FOV: Double = 76.35
-        const val VIDEO_V_FOV: Double = 61.05
+        const val RECORD_WIDTH: Int = 2048
+        const val RECORD_HEIGHT: Int = 768
 
         const val PATH_ON_MOVIES_STORAGE = "/Movies/"
         const val PATH_ON_PICTURE_STORAGE = "/Pictures/"

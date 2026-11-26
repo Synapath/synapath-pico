@@ -1,13 +1,18 @@
-# Synapath PICO — RGB / ToF / head-pose probe
+# Synapath PICO — RGB / ToF / head-pose capture
 
-Branch: `feature/rgb-tof-headpose`, based on `baseline/sdk-recording-ui3`.
-Separate directory: `../synapath-pico-sensors`. The app-recording-preview branch
-has not been merged. This branch uses the SDK's original startRecord path.
+The main branch contains the RGB / ToF / head-pose capture implementation,
+developed on `feature/rgb-tof-headpose` from `baseline/sdk-recording-ui3`.
+It uses the SDK's original startRecord path. The separate
+`feature/app-recording-preview` encoder experiment has not been merged.
 
 The supplied capturelib-0.1.1.aar exposes three recording switches:
 `KEY_WRITE_DEPTH_DATA`, `KEY_WRITE_POSE_DATA`, and `KEY_WRITE_CAMERA_PARAMS_DATA`.
 This probe enables all three while preserving requested RGB 60 FPS, 2048×768,
-RAW mode, 10×1024×1024 bit/s and the baseline enhancement settings.
+SDK undistorted output by default, 10×1024×1024 bit/s and the baseline
+enhancement settings. In `0.1.1-sensors.4`, “去畸变图像” is checked on launch;
+the app explicitly sets `KEY_OUTPUT_CAMERA_RAW_DATA=VALUE_FALSE`. Unchecking
+it requests the SDK camera RAW mode instead. This uses the official Demo's
+mode mapping; the app does not add a separate image-remapping pass.
 
 The app is **Synapath PICO Sensors**, package `com.synapath.picosensors`.
 It installs alongside both stable and application-encoding experiment apps.
@@ -22,11 +27,43 @@ adb shell pm grant com.synapath.picosensors com.picovr.permission.SPATIAL_DATA
 adb shell am start -n com.synapath.picosensors/com.picoxr.capturesdkdemo.MainActivity
 ```
 
-After Stop, the APK performs lossless common-window MP4 alignment and publishes
-`/sdcard/Movies/Synapath/Synapath-*.mp4`. Wait for the aligned-save confirmation.
-The original SDK file remains in `/sdcard/Movies/.SynapathPending/` for traceability.
-This shifts a common file time origin and trims to an RGB keyframe; it does not
-calibrate physical sensor latency or fabricate simultaneous measurements.
+After Stop, version `0.1.1-sensors.3` preserves PXR's existing common timeline
+and publishes `/sdcard/Movies/Synapath/Synapath-*.mp4`. No cropping, timestamp
+shift, remuxing or sample synthesis occurs. The published MP4 is a byte-identical
+copy of the SDK recording, verified by SHA-256 readback before publication.
+Wait for the save confirmation. The SDK file remains in
+`/sdcard/Movies/.SynapathPending/` for traceability.
+
+The APK reads original MP4 edit lists and checks RGB/pose/ToF vendor time-base
+fields. Different first-sample times are preserved. Missing sensor tracks or
+inconsistent base fields produce a visible warning, never an invented alignment.
+An audit JSON is saved under the app's external files directory in `timelines/`;
+the MP4 already contains its original vendor timing and needs no sidecar to
+retain the existing track timing. This inspection verifies file-level metadata,
+not physical sensor latency or exposure synchronization.
+See [timestamp findings](docs/timestamp-audit.md).
+
+Version `0.1.1-sensors.5` shows and exports both calibration sources:
+
+- `raw_camera_calibration`: SDK RAW-mode RGB intrinsics, extrinsics and distortion
+  coefficients for the requested single-eye dimensions. Original packed bytes
+  are preserved as Base64 and little-endian float64 values.
+- `output_image_parameters`: the selected mode's actual SDK calibration callback,
+  including per-camera intrinsics/K and packed extrinsics. It uses no fixed-FOV
+  projection helper. Camera packing and independent physical projection validation
+  remain explicitly distinguished from vendor-reported values.
+
+When undistorted output is selected, startup briefly configures RAW to read its
+calibration, then reopens a fresh capture client in undistorted mode to read the second set.
+Recording stays disabled during the RAW calibration pass. SDK callbacks are
+mode-dependent on firmware 5.15.8; one callback is not mislabelled as both sets.
+The calibration page refreshes after mode changes. Each recording freezes both
+sets at Start and exports `Synapath-<timestamp>.calibration.json` to
+`/sdcard/Download/Synapath/Calibrations/` at Stop, linked to the MP4 SHA-256 and
+vendor timeline base. Manual export writes both sets into one JSON there too.
+The MP4 and its original vendor calibration remain byte-identical to SDK output.
+See [calibration output details](docs/calibration-output.md).
+
 After pulling a recording:
 
 ```sh
@@ -39,6 +76,7 @@ without modifying their bytes. Check `summary.json` rather than relying solely
 on configured switches.
 
 Verified worn-state test: RGB 60 FPS; head pose present; 320×240 raw depth
-at about 5 Hz (76 distinct samples). The off-head trial produced depth at
-about 1 Hz. This branch does not force ToF to stay at 5 Hz when removed.
+at about 5 Hz (76 distinct samples). A stationary off-head trial produced depth
+at about 1 Hz; a later moving off-head trial also reached 5 Hz. Wearing state
+alone does not explain the rate. This branch does not force ToF to stay at 5 Hz.
 See [SDK capability findings](docs/sensor-capabilities.md).

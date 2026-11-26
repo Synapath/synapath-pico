@@ -38,13 +38,13 @@ PXRCaptureSDK 0.1.1" android:lineSpacingExtra="6dp"/>
       <TextView style="@style/CaptureText" android:text="视频输出" android:textSize="20sp" android:layout_marginBottom="10dp"/>
       <TextView style="@style/CaptureText" android:text="请求帧率  60 FPS       分辨率  2048 × 768
 码率  10 Mi bit/s       编码模式  双目拼接" android:lineSpacingExtra="8dp"/>
-      <CheckBox android:id="@+id/check_box" android:layout_width="wrap_content" android:layout_height="48dp" android:text="反畸变图像" android:textColor="#EAF0F5"/>
-      <TextView style="@style/CaptureMuted" android:text="默认 RAW 模式。此处显示请求配置，实际帧率以录像文件检查为准。"/>
+      <CheckBox android:id="@+id/check_box" android:layout_width="wrap_content" android:layout_height="48dp" android:checked="true" android:saveEnabled="false" android:text="去畸变图像（默认开启）" android:textColor="#EAF0F5"/>
+      <TextView style="@style/CaptureMuted" android:text="默认使用 SDK 去畸变输出；取消勾选切换到相机 RAW 图像模式。实际帧率以录像文件检查为准。"/>
      </LinearLayout>
      <LinearLayout android:id="@+id/page_calibration" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
       <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal">
-      <Button android:id="@+id/btn_get_camera_param" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="读取相机内外参"/>
-      <Button android:id="@+id/btn_export_calibration" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="导出完整精度 JSON" android:enabled="false" android:layout_marginStart="12dp"/>
+      <Button android:id="@+id/btn_get_camera_param" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="读取两套参数"/>
+      <Button android:id="@+id/btn_export_calibration" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="导出标定与输出参数" android:enabled="false" android:layout_marginStart="12dp"/>
       </LinearLayout>
       <TextView android:id="@+id/tv_camera_param" style="@style/CaptureText" android:layout_width="match_parent" android:text="点击读取以查看 SDK 返回值" android:textSize="13sp" android:textIsSelectable="true"/>
       <LinearLayout android:id="@+id/calibration_cards" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="12dp"/>

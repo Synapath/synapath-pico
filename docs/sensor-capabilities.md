@@ -119,10 +119,87 @@ one-click export action. Pose interpolation is deliberately omitted pending
 confirmation of quaternion ordering and coordinate semantics. Temporal
 association does not calibrate sensor latency or establish exposure sync.
 
-## In-APK MP4 alignment: sensors.2
+## Dual calibration export: sensors.5
 
-The APK now finalizes the MP4 before publishing it to the normal video library.
-The Mac dataset export utility is not required for these new recordings.
+See [calibration-output.md](calibration-output.md). Actual mode A/B testing shows
+that this firmware's LENS_RGB calibration callback changes with output mode. The
+app now temporarily queries RAW mode at startup, caches its calibration, restores
+the requested undistorted output and records that mode's calibration separately.
+Both are shown and exported together, including per-record automatic JSON linked
+to video SHA-256. The FOV-derived helper is not used for the final output K.
+Original-mode values refer to the requested single-eye resolution, not assumed
+full sensor dimensions. Missing SDK fields are retained as unavailable.
+
+## Current saving policy: sensors.3
+
+From sensors.4, the default RGB image mode is the official Demo's undistorted
+mode (`KEY_OUTPUT_CAMERA_RAW_DATA=VALUE_FALSE`). The checkbox is enabled by
+default and both initial startup and permission-grant startup read its state.
+The mode is passed explicitly on every configure call; unchecking selects
+`VALUE_TRUE`. Saved view state does not restore the old RAW default. No
+application-side remapping or MP4 timestamp rewrite is introduced. Intrinsics
+and extrinsics must still be interpreted for the selected output mode; switching
+mode is not proof that the recorded raw-camera calibration describes the
+processed pixels. Earlier recording measurements below retain their original
+mode and are not retroactively described as undistorted.
+
+The default save path now uses `PicoTimeline.inspect` and `copyUnchanged`,
+preserving the complete SDK MP4 byte-for-byte. After SDK stop returns, the APK
+reads the original edit lists, sample timing and RGB/head-pose/depth `tbtm`
+fields. Matching positive base fields and nonempty tracks are reported as a
+shared file timebase. This does not certify exposure reference or sensor latency.
+
+The video is copied into a pending MediaStore item. A SHA-256 digest is computed
+over the source bytes during copying and compared with a digest obtained by
+reopening the destination. Only a matching copy is published. Source recordings
+remain in `.SynapathPending`; no leading/trailing frames, PTS, edit lists,
+calibration or metadata are modified. Inconsistent bases or missing tracks are
+reported visibly while preserving the original recording. Structural inspection
+or copy failures retain the source and do not publish a partial result.
+
+Audit JSON is stored in the app external-files `timelines/` directory, with
+`method=preserve_pxr_timeline`, `pts_shift_us=0`, `trimmed_samples=0`, original
+per-track first/last PTS, counts, vendor bases and the verified SHA-256. It also
+states `sensor_latency_calibrated=false`. There is no new synchronization UUID
+inside the MP4 because its bytes are unchanged. The original vendor timing is
+already self-contained in the MP4.
+
+The previous `Mp4TimelineAligner` remains as an unused historical utility. It is
+not invoked by APK saving. Neither of the other development branches is merged.
+
+Validation on 2026-11-26:
+
+- Docker build of versionCode 6 / `0.1.1-sensors.3` succeeded and was installed
+  on A9210 firmware 5.15.8.
+- The same Java inspector/copy implementation ran in Docker against three
+  actual SDK recordings (1 Hz and 5 Hz depth). All output files were byte-identical
+  to their source. Independently parsed ffprobe sample counts and first/last
+  PTS matched the Java reports within 1 us. The 5 Hz retest retained all 891 RGB,
+  14586 pose and 72 depth samples, including the original startup intervals.
+- On-device Stop published `Synapath-1795689421806.mp4` and automatically
+  restored preview. Pulling both source and published files independently
+  confirmed identical SHA-256
+  `9618b9d223eb1c5ea3f239b4f2327d38cb4d1c6f3d2210df3cc26d7741bd2c3e`.
+- That recording contains 1071 RGB frames at approximately 60 FPS, 17629 pose
+  packets and 17 depth frames at approximately 1 Hz. The rate observation is
+  separate from timing preservation; this change does not force ToF5.
+- Shared vendor base is 1795689421909257; original first PTS values are RGB0,
+  pose0.5496 s and depth1.0845 s. No first samples were discarded or independently
+  zeroed. Source and output have all original audio and vendor metadata as well.
+- Local evidence is in `artifacts/timeline-preserved/`, including independent
+  verification JSON, real-device source/output, APK audit JSON and device logs.
+
+## Historical common-window cropping: sensors.2 (superseded)
+
+The vendor already maps RGB, pose and depth onto a common MP4 timeline.
+The operation below trims to an overlapping interval and rebases that existing
+timeline; it does not establish or improve physical sensor synchronization.
+See [timestamp-audit.md](timestamp-audit.md) for the firmware-level evidence,
+including time-targeted pose queries and ToF timestamp conversion.
+
+The previous sensors.2 APK finalized the MP4 before publishing it to the video
+library. Its historical behavior and validation follow; sensors.3 does not use
+this rewrite path.
 
 1. SDK records RGB, raw depth, head pose, audio and vendor metadata into
    `/sdcard/Movies/.SynapathPending/raw-<timestamp>.mp4`.
