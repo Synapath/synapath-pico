@@ -22,7 +22,12 @@ adb shell pm grant com.synapath.picosensors com.picovr.permission.SPATIAL_DATA
 adb shell am start -n com.synapath.picosensors/com.picoxr.capturesdkdemo.MainActivity
 ```
 
-Recordings appear in `/sdcard/Movies/DemoPicture-*.mp4`. After pulling a recording:
+After Stop, the APK performs lossless common-window MP4 alignment and publishes
+`/sdcard/Movies/Synapath/Synapath-*.mp4`. Wait for the aligned-save confirmation.
+The original SDK file remains in `/sdcard/Movies/.SynapathPending/` for traceability.
+This shifts a common file time origin and trims to an RGB keyframe; it does not
+calibrate physical sensor latency or fabricate simultaneous measurements.
+After pulling a recording:
 
 ```sh
 python3 scripts/analyze-sensors.py video.mp4 --output artifacts/extracted

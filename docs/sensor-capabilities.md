@@ -118,3 +118,61 @@ runs on the Mac with ffprobe; it is not yet wired into an Android stop-record /
 one-click export action. Pose interpolation is deliberately omitted pending
 confirmation of quaternion ordering and coordinate semantics. Temporal
 association does not calibrate sensor latency or establish exposure sync.
+
+## In-APK MP4 alignment: sensors.2
+
+The APK now finalizes the MP4 before publishing it to the normal video library.
+The Mac dataset export utility is not required for these new recordings.
+
+1. SDK records RGB, raw depth, head pose, audio and vendor metadata into
+   `/sdcard/Movies/.SynapathPending/raw-<timestamp>.mp4`.
+2. On Stop, the SDK closes the recording. Background processing selects a common
+   RGB/head-pose/depth time window and advances the start to the next RGB sync
+   sample (keyframe) to retain decodability without re-encoding.
+3. Mp4TimelineAligner copies retained sample payloads unchanged, rebuilds sample
+   tables, and shifts all timed tracks by the same origin. It preserves vendor
+   sample descriptions, calibration and coordinate tags; PICO tbtm base fields
+   advance by that same origin to remain consistent with the new relative PTS.
+4. The completed result is published through MediaStore into
+   `/sdcard/Movies/Synapath/Synapath-<timestamp>.mp4`. The original is retained
+   separately in the hidden pending directory. Failed processing does not publish
+   an incomplete/unverified final file and does not delete the original.
+
+The in-file moov/uuid identifier `SYNAPATHPICOTIME` contains JSON with schema,
+origin_us, duration_us, method and sensor_latency_calibrated=false. This allows
+an original relative timestamp to be reconstructed as new_pts + origin_us.
+Files already carrying that marker are rejected by the aligner to prevent
+accidental repeated cropping. Timestamps for different sampling rates remain
+different; e.g. the first pose can be a fraction of a millisecond after RGB0,
+and the first retained ToF can occur later. They share one axis; they are not
+independently reset to zero and no depth/pose samples are synthesized.
+
+Validation:
+- JVM runs the same Android Java implementation against the previous 5 Hz file.
+  Origin=1 s; 830 RGB, 14105 pose, 70 depth samples retained. All retained
+  payload hashes match original samples, and required-track PTS equals original
+  PTS minus 1 s (within ffprobe text precision). HEVC fully decodes without errors.
+- Device end-to-end recording raw-1795687766686.mp4 produced
+  Synapath-1795687766686.mp4 automatically. Origin=2 s; duration=19.993544 s;
+  1200 RGB, 20392 pose and 20 depth samples retained. ToF was 1 Hz in this
+  device state; alignment does not change the input rate.
+- File verification confirms all vendor sample descriptions are unchanged except
+  for the intentional tbtm offset, and retained payloads are unchanged. RGB,
+  head pose and depth PTS each shift by exactly 2 s at ffprobe precision;
+  audio differs by at most 1 us due to timescale rounding. RGB remains 60 FPS.
+- Evidence: artifacts/apk-alignment/device-verification.json and device MP4s.
+
+```sh
+python3 scripts/verify-aligned-mp4.py raw.mp4 aligned.mp4 --output verification.json
+```
+
+This writer targets the observed non-fragmented PXRCapture profile, with
+monotonically ordered sample PTS and supported sample tables. Unsupported
+fragmentation, encryption/sample-table extensions or complex edit lists are
+rejected rather than silently discarded. Short recordings without a common
+RGB keyframe interval cannot be published as aligned output. File durations
+that overflow the current 32-bit movie duration field are rejected. Keep the
+app in the foreground while the save operation completes. Original acquisition
+latency, exposure timing semantics and coordinate definitions are not calibrated
+by this operation. Long-recording/background interruption robustness remains
+additional production validation work.

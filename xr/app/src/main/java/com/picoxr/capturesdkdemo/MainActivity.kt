@@ -4,6 +4,10 @@ import android.Manifest
 import android.media.ImageReader
 import android.os.Bundle
 import android.os.Environment
+import android.content.ContentValues
+import android.provider.MediaStore
+import java.util.concurrent.Executors
+import com.picoxr.capturesdkdemo.timeline.Mp4TimelineAligner
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -51,6 +55,25 @@ class MainActivity : AppCompatActivity() {
     private val uiHandler = Handler(Looper.getMainLooper())
     private var recordingSince = 0L
     private var lastRecordPath = ""
+    private var pendingRecordPath = ""
+    private val finalizeWorker = Executors.newSingleThreadExecutor()
+    @Volatile private var finalizing = false
+
+    private fun renderFinalizing() {
+        findViewById<TextView>(R.id.preview_message).apply {
+            visibility = View.VISIBLE
+            text = "正在统一 RGB / ToF / Pose 时间轴\n保存完成后自动恢复预览"
+        }
+        btnStartRecord.isEnabled = false
+        btnStopRecord.isEnabled = false
+        btnCapture.isEnabled = false
+        btnStartPreview.isEnabled = false
+        btnStopPreview.isEnabled = false
+        btnGetCameraParam.isEnabled = false
+        checkBox.isEnabled = false
+        findViewById<TextView>(R.id.capture_status).text = "正在对齐保存"
+        findViewById<TextView>(R.id.session_status).text = "统一 RGB / ToF / Pose 时间轴，请稍候…"
+    }
     private var previewAttached = false
     private var calibrationJson: JSONObject? = null
     private var resumePreviewAfterRecord = false
@@ -86,6 +109,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderCaptureState(state: Int) {
+        if (finalizing) { renderFinalizing(); return }
+        btnStopRecord.isEnabled = true
         val recording = state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_CAPTURING.ordinal
         val previewing = state == PXRCapture.PXRCaptureState.CAPTURE_STATE_VIDEO_PREVIEWING.ordinal
         findViewById<TextView>(R.id.preview_message).apply {
@@ -401,11 +426,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun startRecord(){
         stopPreview()
-        val mParentDir = Environment.getExternalStorageDirectory()
-            .absolutePath + PATH_ON_MOVIES_STORAGE
-        val fileName = "DemoPicture-${System.currentTimeMillis()}.mp4"
-        val filePath = mParentDir + fileName
-        lastRecordPath = filePath
+        val pending = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), ".SynapathPending")
+        if (!pending.exists() && !pending.mkdirs()) {
+            findViewById<TextView>(R.id.session_status).text = "无法创建临时录制目录"
+            return
+        }
+        val stamp = System.currentTimeMillis()
+        val filePath = File(pending, "raw-$stamp.mp4").absolutePath
+        pendingRecordPath = filePath
+        lastRecordPath = "Synapath-$stamp.mp4"
         findViewById<TextView>(R.id.session_path).text = filePath
         Log.i(TAG, "startRecord filePath: $filePath")
         val result = pxrCapture?.startRecord(filePath)
@@ -418,7 +447,54 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopRecord(){
-        pxrCapture?.stopRecord()
+        if (finalizing || pendingRecordPath.isEmpty()) return
+        finalizing = true
+        recordingSince = 0L
+        uiHandler.removeCallbacks(recordingTimer)
+        renderFinalizing()
+        val source = File(pendingRecordPath)
+        val finalName = lastRecordPath
+        finalizeWorker.execute {
+            var uri: android.net.Uri? = null
+            var temp: File? = null
+            try {
+                val result = pxrCapture?.stopRecord() ?: 0
+                check(result > 0) { "SDK stopRecord=$result" }
+                // The original recording remains retained; only the aligned file
+                // is published to the normal video collection.
+                temp = File(getExternalFilesDir("alignment"), finalName)
+                check(!temp.exists()) { "临时输出文件已存在" }
+                val aligned = Mp4TimelineAligner.align(source, temp)
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, finalName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/Synapath")
+                    put(MediaStore.Video.Media.IS_PENDING, 1)
+                }
+                uri = contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                    ?: error("无法创建输出视频")
+                contentResolver.openOutputStream(uri, "w")!!.use { output -> temp.inputStream().use { it.copyTo(output) } }
+                contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+                Log.i(TAG, "ALIGNED_SAVED uri=$uri name=$finalName $aligned raw=${source.absolutePath}")
+                pendingRecordPath = ""
+                finalizing = false
+                runOnUiThread {
+                    renderCaptureState(captureState)
+                    findViewById<TextView>(R.id.session_path).text = "/sdcard/Movies/Synapath/$finalName"
+                    findViewById<TextView>(R.id.session_status).text =
+                        "已对齐保存 · RGB ${aligned.rgb} / ToF ${aligned.depth} / Pose ${aligned.pose} · 起点裁剪 %.3f 秒".format(aligned.originUs / 1e6)
+                }
+            } catch (error: Exception) {
+                uri?.let { contentResolver.delete(it, null, null) }
+                Log.e(TAG, "Alignment failed; original retained at $source", error)
+                finalizing = false
+                runOnUiThread {
+                    renderCaptureState(captureState)
+                    findViewById<TextView>(R.id.session_status).text = "对齐保存失败，原始录像已保留：${error.message}"
+                    findViewById<TextView>(R.id.session_path).text = source.absolutePath
+                }
+            } finally { temp?.delete() }
+        }
     }
 
     private fun startPreview(){
@@ -440,6 +516,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         uiHandler.removeCallbacksAndMessages(null)
+        finalizeWorker.shutdown()
         super.onDestroy()
     }
 
