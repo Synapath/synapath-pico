@@ -19,6 +19,7 @@
 
 namespace {
 constexpr int WIDTH=1600, HEIGHT=900;
+constexpr int RAY_EYE_SIZE=1024;
 constexpr float QUAD_WIDTH=1.6f, QUAD_HEIGHT=.9f, QUAD_Z=-1.8f;
 std::atomic<bool> stopRequested{false};
 void check(XrResult r, const char* op) {
@@ -34,7 +35,13 @@ struct Runtime {
     PFN_xrDestroyPassthroughLayerFB destroyPassthroughLayer{};
     EGLDisplay display = EGL_NO_DISPLAY; EGLContext context = EGL_NO_CONTEXT;
     EGLSurface pbuffer = EGL_NO_SURFACE; GLuint fbo{}, hudTexture{}, cursorProgram{};
-    std::vector<XrSwapchainImageOpenGLESKHR> images;
+    std::vector<XrSwapchainImageOpenGLESKHR> images, rayImages;
+    XrSwapchain raySwapchain{};
+    GLuint rayFbo{}, rayProgram{};
+    struct Ray { bool tracked=false,pressed=false,hit=false; float x=-1,y=-1; XrVector3f origin{},end{}; };
+    std::array<Ray,2> rays{};
+    std::array<bool,2> previousButtons{};
+    int pressOwner=-1;
     bool running = false, glInitialized = false; int revision = -1;
     bool picoControllers = false;
     size_t pointerHand = 1; // Keep hover and press on the same hand; right by default.
@@ -134,11 +141,12 @@ struct Runtime {
             if (!ok) { glDeleteShader(id);throw std::runtime_error("Cursor shader compilation failed"); }
             return id;
         };
-        GLuint vs=shader(GL_VERTEX_SHADER,"#version 300 es\nuniform vec2 position;void main(){gl_Position=vec4(position,0,1);gl_PointSize=14.0;}");
-        GLuint fs=shader(GL_FRAGMENT_SHADER,"#version 300 es\nprecision mediump float;out vec4 color;void main(){if(distance(gl_PointCoord,vec2(.5))>.5)discard;color=vec4(1);}");
+        GLuint vs=shader(GL_VERTEX_SHADER,"#version 300 es\nuniform vec2 position;void main(){gl_Position=vec4(position,0,1);gl_PointSize=18.0;}");
+        GLuint fs=shader(GL_FRAGMENT_SHADER,"#version 300 es\nprecision mediump float;uniform vec4 tint;out vec4 color;void main(){float r=distance(gl_PointCoord,vec2(.5));float ring=(1.-smoothstep(.39,.46,r))*smoothstep(.29,.34,r);float core=1.-smoothstep(.06,.12,r);float a=max(ring*.8,core);if(a<.01)discard;color=vec4(mix(tint.rgb,vec3(1),core)*a,a);}");
         cursorProgram=glCreateProgram();glAttachShader(cursorProgram,vs);glAttachShader(cursorProgram,fs);glLinkProgram(cursorProgram);
         GLint linked{};glGetProgramiv(cursorProgram,GL_LINK_STATUS,&linked);glDeleteShader(vs);glDeleteShader(fs);
         if (!linked) throw std::runtime_error("Cursor shader linking failed");
+        initializeRays(format);
         glInitialized = true; env->CallVoidMethod(activity, glReady); javaCheck();
         log("XR_READY view_space_quad=1 passthrough=1 capture=PXRCaptureSDK");
     }
@@ -172,43 +180,132 @@ struct Runtime {
         check(xrAttachSessionActionSets(session, &attach), "attach actions");
     }
     void input(XrTime time, bool& down, float& cx, float& cy) {
-        XrActiveActionSet active{actions, XR_NULL_PATH}; XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets = 1; sync.activeActionSets = &active;
-        if (xrSyncActions(session, &sync) != XR_SUCCESS) return;
+        rays={};
+        XrActiveActionSet active{actions, XR_NULL_PATH}; XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO}; sync.countActiveActionSets=1;sync.activeActionSets=&active;
+        if (xrSyncActions(session,&sync)!=XR_SUCCESS) { pressOwner=-1;previousButtons={};return; }
         XrSpaceLocation head{XR_TYPE_SPACE_LOCATION};
-        constexpr XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-        if (XR_FAILED(xrLocateSpace(view, local, time, &head)) || (head.locationFlags & valid) != valid) return;
-        auto rotate = [](XrQuaternionf q, XrVector3f v) {
+        constexpr XrSpaceLocationFlags valid=XR_SPACE_LOCATION_POSITION_VALID_BIT|XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        if (XR_FAILED(xrLocateSpace(view,local,time,&head)) || (head.locationFlags&valid)!=valid) { pressOwner=-1;return; }
+        auto rotate=[](XrQuaternionf q,XrVector3f v) {
             XrVector3f t{2*(q.y*v.z-q.z*v.y),2*(q.z*v.x-q.x*v.z),2*(q.x*v.y-q.y*v.x)};
-            return XrVector3f{v.x+q.w*t.x+(q.y*t.z-q.z*t.y),v.y+q.w*t.y+(q.z*t.x-q.x*t.z),v.z+q.w*t.z+(q.x*t.y-q.y*t.x)};
+            return XrVector3f{v.x+q.w*t.x+q.y*t.z-q.z*t.y,v.y+q.w*t.y+q.z*t.x-q.x*t.z,v.z+q.w*t.z+q.x*t.y-q.y*t.x};
         };
         XrQuaternionf inverseHead{-head.pose.orientation.x,-head.pose.orientation.y,-head.pose.orientation.z,head.pose.orientation.w};
-        static int diagnostics = 0;
-        for (size_t i=0;i<hands.size();i++) {
-            XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO}; get.subactionPath = hands[i];
-            get.action = select; XrActionStateBoolean s{XR_TYPE_ACTION_STATE_BOOLEAN}; xrGetActionStateBoolean(session, &get, &s);
-            get.action = trigger; XrActionStateFloat t{XR_TYPE_ACTION_STATE_FLOAT}; xrGetActionStateFloat(session, &get, &t);
-            bool pressed = (s.isActive && s.currentState) || (t.isActive && t.currentState > .7f);
-            if (pressed && pointerHand != i) { pointerHand = i; cx=-1;cy=-1;down=false; }
-            if (i != pointerHand) continue;
-            get.action = aim; XrActionStatePose poseState{XR_TYPE_ACTION_STATE_POSE};
-            auto poseResult = xrGetActionStatePose(session, &get, &poseState);
-            if (XR_FAILED(poseResult) || !poseState.isActive) continue;
+        for(size_t i=0;i<2;i++) {
+            auto& ray=rays[i];
+            XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};get.subactionPath=hands[i];
+            get.action=select;XrActionStateBoolean s{XR_TYPE_ACTION_STATE_BOOLEAN};xrGetActionStateBoolean(session,&get,&s);
+            get.action=trigger;XrActionStateFloat t{XR_TYPE_ACTION_STATE_FLOAT};xrGetActionStateFloat(session,&get,&t);
+            ray.pressed=(s.isActive&&s.currentState)||(t.isActive&&t.currentState>.7f);
+            get.action=aim;XrActionStatePose ps{XR_TYPE_ACTION_STATE_POSE};
+            if(XR_FAILED(xrGetActionStatePose(session,&get,&ps))||!ps.isActive)continue;
             XrSpaceLocation location{XR_TYPE_SPACE_LOCATION};
-            if (XR_FAILED(xrLocateSpace(aimSpaces[i], local, time, &location))) continue;
-            if ((location.locationFlags & valid) != valid) continue;
-            auto q = location.pose.orientation; auto p = location.pose.position;
-            // Query action poses in LOCAL (as in normal XR scene rendering), then
-            // transform both ray origin and direction into the head-follow plane.
-            auto origin = rotate(inverseHead, {p.x-head.pose.position.x,p.y-head.pose.position.y,p.z-head.pose.position.z});
-            auto direction = rotate(inverseHead, rotate(q,{0,0,-1}));
-            p = origin;
-            float dx=direction.x,dy=direction.y,dz=direction.z;
-            if (++diagnostics % 300 == 0) __android_log_print(ANDROID_LOG_INFO,"SynapathOpenXR","XR_AIM hand=%zu active=%u flags=%llu p=%.3f,%.3f,%.3f q=%.3f,%.3f,%.3f,%.3f dir=%.3f,%.3f,%.3f",i,poseState.isActive,(unsigned long long)location.locationFlags,p.x,p.y,p.z,q.x,q.y,q.z,q.w,dx,dy,dz);
-            if (dz >= -.001f) continue;
-            float distance = (QUAD_Z-p.z)/dz; if (distance <= 0) continue;
-            float x = (p.x+distance*dx)/QUAD_WIDTH + .5f, y = .5f-(p.y+distance*dy)/QUAD_HEIGHT;
-            if (x >= 0 && x <= 1 && y >= 0 && y <= 1 && (cx < 0 || pressed)) { cx = x*WIDTH; cy = y*HEIGHT; down = pressed; }
+            if(XR_FAILED(xrLocateSpace(aimSpaces[i],local,time,&location))||(location.locationFlags&valid)!=valid)continue;
+            auto p=location.pose.position;
+            ray.origin=rotate(inverseHead,{p.x-head.pose.position.x,p.y-head.pose.position.y,p.z-head.pose.position.z});
+            auto dir=rotate(inverseHead,rotate(location.pose.orientation,{0,0,-1}));
+            ray.tracked=true;
+            float distance=.28f;
+            if(dir.z<-.001f) {
+                float intersection=(QUAD_Z-ray.origin.z)/dir.z;
+                if(intersection>0 && intersection<10) {
+                    float x=(ray.origin.x+intersection*dir.x)/QUAD_WIDTH+.5f;
+                    float y=.5f-(ray.origin.y+intersection*dir.y)/QUAD_HEIGHT;
+                    if(x>=0&&x<=1&&y>=0&&y<=1) { ray.hit=true;ray.x=x*WIDTH;ray.y=y*HEIGHT;distance=intersection; }
+                }
+            }
+            ray.end={ray.origin.x+distance*dir.x,ray.origin.y+distance*dir.y,ray.origin.z+distance*dir.z};
         }
+        // A continuous press belongs to one hand. The other hand can point but
+        // cannot steal an in-progress click or stop hold. Release gets its own frame.
+        bool released=false;
+        if(pressOwner>=0 && (!rays[pressOwner].pressed||!rays[pressOwner].tracked)) { pressOwner=-1;released=true; }
+        if(pressOwner<0&&!released) {
+            for(int i=0;i<2;i++) if(rays[i].tracked&&rays[i].pressed&&!previousButtons[i]) { pressOwner=i;pointerHand=i;break; }
+        }
+        if(pressOwner>=0)pointerHand=pressOwner;
+        else if(!rays[pointerHand].tracked && rays[1-pointerHand].tracked)pointerHand=1-pointerHand;
+        auto& chosen=rays[pointerHand];
+        if(chosen.tracked&&chosen.hit) { cx=chosen.x;cy=chosen.y;down=pressOwner>=0&&chosen.pressed; }
+        for(int i=0;i<2;i++)previousButtons[i]=rays[i].pressed;
+    }
+    void initializeRays(int64_t format) {
+        XrSwapchainCreateInfo sw{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        sw.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT|XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+        sw.format=format;sw.sampleCount=1;sw.width=2*RAY_EYE_SIZE;sw.height=RAY_EYE_SIZE;sw.faceCount=1;sw.arraySize=1;sw.mipCount=1;
+        check(xrCreateSwapchain(session,&sw,&raySwapchain),"ray swapchain");
+        uint32_t n{};check(xrEnumerateSwapchainImages(raySwapchain,0,&n,nullptr),"ray image count");
+        rayImages.resize(n,{XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+        check(xrEnumerateSwapchainImages(raySwapchain,n,&n,reinterpret_cast<XrSwapchainImageBaseHeader*>(rayImages.data())),"ray images");
+        const char* vertex=R"glsl(#version 300 es
+uniform vec3 start,end,eyePosition;
+uniform vec4 inverseEye,fov;
+out float opacity;out float edge;
+vec3 rotate(vec3 v){return v+2.*cross(inverseEye.xyz,cross(inverseEye.xyz,v)+inverseEye.w*v);}
+vec4 project(vec3 v){float z=-v.z;return vec4((2.*v.x-(fov.y+fov.x)*z)/(fov.y-fov.x),(2.*v.y-(fov.w+fov.z)*z)/(fov.w-fov.z),0.,z);}
+void main(){
+ vec3 a=rotate(start-eyePosition),b=rotate(end-eyePosition);
+ opacity=0.;edge=0.;
+ if(a.z>-.03&&b.z>-.03){gl_Position=vec4(3,3,3,1);return;}
+ if(a.z>-.03)a=mix(a,b,(-.03-a.z)/(b.z-a.z));
+ if(b.z>-.03)b=mix(b,a,(-.03-b.z)/(a.z-b.z));
+ vec4 ca=project(a),cb=project(b);
+ vec2 d=cb.xy/cb.w-ca.xy/ca.w;
+ if(length(d)<.00001)d=vec2(1,0);
+ vec2 normal=normalize(vec2(-d.y,d.x));
+ const float along[6]=float[6](0.,1.,0.,0.,1.,1.);
+ const float side[6]=float[6](-1.,-1.,1.,1.,-1.,1.);
+ float t=along[gl_VertexID];gl_Position=mix(ca,cb,t);
+ gl_Position.xy+=normal*side[gl_VertexID]*(2.1/1024.)*gl_Position.w;
+ opacity=mix(.02,.62,t);edge=side[gl_VertexID];
+})glsl";
+        const char* fragment=R"glsl(#version 300 es
+precision mediump float;uniform vec3 tint;uniform float strength;in float opacity;in float edge;out vec4 color;
+void main(){float a=opacity*strength*(1.-smoothstep(.35,1.,abs(edge)));color=vec4(tint*a,a);})glsl";
+        auto shader=[](GLenum type,const char* source) {
+            GLuint id=glCreateShader(type);glShaderSource(id,1,&source,nullptr);glCompileShader(id);
+            GLint ok{};glGetShaderiv(id,GL_COMPILE_STATUS,&ok);
+            if(!ok){char error[1024]{};glGetShaderInfoLog(id,sizeof(error),nullptr,error);glDeleteShader(id);throw std::runtime_error(std::string("Ray shader: ")+error);}return id;
+        };
+        auto vs=shader(GL_VERTEX_SHADER,vertex),fs=shader(GL_FRAGMENT_SHADER,fragment);
+        rayProgram=glCreateProgram();glAttachShader(rayProgram,vs);glAttachShader(rayProgram,fs);glLinkProgram(rayProgram);
+        GLint ok{};glGetProgramiv(rayProgram,GL_LINK_STATUS,&ok);glDeleteShader(vs);glDeleteShader(fs);
+        if(!ok)throw std::runtime_error("Ray shader linking failed");
+        glGenFramebuffers(1,&rayFbo);
+        log("DUAL_RAYS_READY stereo=1 left=blue right=amber");
+    }
+    bool renderRays(XrTime time,std::array<XrCompositionLayerProjectionView,2>& output) {
+        std::array<XrView,2> eyes{{{XR_TYPE_VIEW},{XR_TYPE_VIEW}}};
+        XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};locate.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;locate.displayTime=time;locate.space=view;
+        XrViewState state{XR_TYPE_VIEW_STATE};uint32_t count{};
+        check(xrLocateViews(session,&locate,&state,2,&count,eyes.data()),"ray eye poses");
+        constexpr XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
+        if(count!=2||(state.viewStateFlags&valid)!=valid)return false;
+        uint32_t index{};XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};check(xrAcquireSwapchainImage(raySwapchain,&acquire,&index),"acquire rays");
+        XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};wait.timeout=XR_INFINITE_DURATION;check(xrWaitSwapchainImage(raySwapchain,&wait),"wait rays");
+        glBindFramebuffer(GL_FRAMEBUFFER,rayFbo);glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,rayImages[index].image,0);
+        if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw std::runtime_error("Ray framebuffer incomplete");
+        glDisable(GL_SCISSOR_TEST);glDisable(GL_DEPTH_TEST);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);
+        glEnable(GL_BLEND);glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA);glUseProgram(rayProgram);
+        for(size_t eye=0;eye<2;eye++) {
+            auto p=eyes[eye].pose.position;auto q=eyes[eye].pose.orientation;auto f=eyes[eye].fov;
+            glViewport(eye*RAY_EYE_SIZE,0,RAY_EYE_SIZE,RAY_EYE_SIZE);
+            glUniform3f(glGetUniformLocation(rayProgram,"eyePosition"),p.x,p.y,p.z);
+            glUniform4f(glGetUniformLocation(rayProgram,"inverseEye"),-q.x,-q.y,-q.z,q.w);
+            glUniform4f(glGetUniformLocation(rayProgram,"fov"),tanf(f.angleLeft),tanf(f.angleRight),tanf(f.angleDown),tanf(f.angleUp));
+            for(size_t hand=0;hand<2;hand++)if(rays[hand].tracked) {
+                auto a=rays[hand].origin,b=rays[hand].end;
+                glUniform3f(glGetUniformLocation(rayProgram,"start"),a.x,a.y,a.z);
+                glUniform3f(glGetUniformLocation(rayProgram,"end"),b.x,b.y,b.z);
+                glUniform3f(glGetUniformLocation(rayProgram,"tint"),hand==0?.82f:1.f,hand==0?.9f:.94f,hand==0?1.f:.84f);
+                glUniform1f(glGetUniformLocation(rayProgram,"strength"),rays[hand].hit?(rays[hand].pressed?1.f:.7f):.35f);
+                glDrawArrays(GL_TRIANGLES,0,6);
+            }
+            output[eye]={XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW};output[eye].pose=eyes[eye].pose;output[eye].fov=f;
+            output[eye].subImage.swapchain=raySwapchain;output[eye].subImage.imageRect.offset={static_cast<int32_t>(eye*RAY_EYE_SIZE),0};output[eye].subImage.imageRect.extent={RAY_EYE_SIZE,RAY_EYE_SIZE};
+        }
+        glDisable(GL_BLEND);glBindFramebuffer(GL_FRAMEBUFFER,0);glFlush();
+        XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};check(xrReleaseSwapchainImage(raySwapchain,&release),"release rays");return true;
     }
     void uploadHud(int nextRevision) {
         if (revision == nextRevision) return;
@@ -250,6 +347,8 @@ struct Runtime {
             std::vector<const XrCompositionLayerBaseHeader*> layers;
             XrCompositionLayerPassthroughFB pt{XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB}; pt.layerHandle = passthroughLayer;
             XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+            XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+            std::array<XrCompositionLayerProjectionView,2> projectionViews{};
             if (state.shouldRender) {
                 uploadHud(rev);
                 uint32_t index{}; XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO}; check(xrAcquireSwapchainImage(swapchain, &acquire, &index), "acquire image");
@@ -260,11 +359,13 @@ struct Runtime {
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo); glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, images[index].image, 0);
                 if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) throw std::runtime_error("XR framebuffer incomplete");
                 glBlitFramebuffer(0,HEIGHT,WIDTH,0,0,0,WIDTH,HEIGHT,GL_COLOR_BUFFER_BIT,GL_NEAREST);
-                if (x>=0 && y>=0) {
-                    glViewport(0,0,WIDTH,HEIGHT);glDisable(GL_BLEND);glUseProgram(cursorProgram);
-                    glUniform2f(glGetUniformLocation(cursorProgram,"position"),2*x/WIDTH-1,1-2*y/HEIGHT);
+                glViewport(0,0,WIDTH,HEIGHT);glEnable(GL_BLEND);glBlendFunc(GL_ONE,GL_ONE_MINUS_SRC_ALPHA);glUseProgram(cursorProgram);
+                for(size_t i=0;i<2;i++) if(rays[i].tracked&&rays[i].hit) {
+                    glUniform2f(glGetUniformLocation(cursorProgram,"position"),2*rays[i].x/WIDTH-1,1-2*rays[i].y/HEIGHT);
+                    glUniform4f(glGetUniformLocation(cursorProgram,"tint"),i==0?.58f:1.f,i==0?.78f:.83f,i==0?1.f:.56f,1.f);
                     glDrawArrays(GL_POINTS,0,1);
                 }
+                glDisable(GL_BLEND);
                 glBindFramebuffer(GL_FRAMEBUFFER, 0); glDeleteFramebuffers(1, &readFbo); glFlush();
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO}; check(xrReleaseSwapchainImage(swapchain, &release), "release image");
                 quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
@@ -273,6 +374,11 @@ struct Runtime {
                 quad.pose.orientation.w = 1; quad.pose.position.z = QUAD_Z; quad.size = {QUAD_WIDTH,QUAD_HEIGHT};
                 layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&pt));
                 layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&quad));
+                if(renderRays(state.predictedDisplayTime,projectionViews)) {
+                    projection.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+                    projection.space=view;projection.viewCount=2;projection.views=projectionViews.data();
+                    layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection));
+                }
             }
             XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO}; end.displayTime = state.predictedDisplayTime;
             end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -281,10 +387,11 @@ struct Runtime {
     }
     ~Runtime() {
         if (glInitialized) { env->CallVoidMethod(activity, shutdown); if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); } }
-        if (context != EGL_NO_CONTEXT) { glDeleteFramebuffers(1, &fbo); glDeleteTextures(1, &hudTexture); glDeleteProgram(cursorProgram); }
+        if (context != EGL_NO_CONTEXT) { glDeleteFramebuffers(1, &fbo); glDeleteTextures(1, &hudTexture); glDeleteProgram(cursorProgram);glDeleteProgram(rayProgram);glDeleteFramebuffers(1,&rayFbo); }
         if (passthroughLayer && destroyPassthroughLayer) destroyPassthroughLayer(passthroughLayer);
         if (passthrough && destroyPassthrough) destroyPassthrough(passthrough);
         if (swapchain) xrDestroySwapchain(swapchain);
+        if (raySwapchain) xrDestroySwapchain(raySwapchain);
         for (auto space : aimSpaces) if (space) xrDestroySpace(space);
         if (view) xrDestroySpace(view);
         if (local) xrDestroySpace(local);

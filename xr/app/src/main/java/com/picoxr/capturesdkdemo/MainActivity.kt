@@ -2,6 +2,10 @@ package com.picoxr.capturesdkdemo
 
 import android.Manifest
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.media.ImageReader
 import android.os.Bundle
@@ -46,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var xrUi: OpenXrUiHost
+    private var debugReceiver: BroadcastReceiver? = null
 
     private lateinit var imageReader: ImageReader
 
@@ -205,6 +210,25 @@ class MainActivity : AppCompatActivity() {
         btnStartRecord.setOnClickListener { startRecord() }
         btnStopRecord.setOnClickListener { stopRecord() }
         btnGetCameraParam.setOnClickListener { getCameraParams() }
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+            // Shell-only automation for controlled A/B tests; absent in release
+            // and protected by the signature-level DUMP sender permission.
+            debugReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.getStringExtra("command") != "record" || !btnStartRecord.isEnabled ||
+                        finalizing || pendingRecordPath.isNotEmpty()) { resultCode = 1; return }
+                    startRecord()
+                    val path = pendingRecordPath
+                    resultCode = if (path.isNotEmpty()) 0 else 2
+                    val duration = intent.getLongExtra("duration_ms", 10000).coerceIn(1000, 30000)
+                    if (path.isNotEmpty()) uiHandler.postDelayed({
+                        if (!isDestroyed && pendingRecordPath == path && !finalizing) stopRecord()
+                    }, duration)
+                }
+            }
+            registerReceiver(debugReceiver, IntentFilter("com.synapath.picosensors.openxr.DEBUG_CAPTURE"),
+                "android.permission.DUMP", null, Context.RECEIVER_EXPORTED)
+        }
         findViewById<Button>(R.id.btn_export_calibration).setOnClickListener { exportCalibration() }
         checkBox.setOnCheckedChangeListener { _, isChecked ->
             GlobalScope.launch(Dispatchers.Default) {
@@ -661,6 +685,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        debugReceiver?.let { unregisterReceiver(it) }
         if (::xrUi.isInitialized) xrUi.pause()
         uiHandler.removeCallbacksAndMessages(null)
         finalizeWorker.shutdown()

@@ -11,8 +11,8 @@ android {
         applicationId = "com.synapath.picosensors.openxr"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.1.1-sensors-xr.1"
+        versionCode = 10
+        versionName = "0.1.1-sensors-xr.2"
         ndk { abiFilters += "arm64-v8a" }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

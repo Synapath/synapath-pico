@@ -21,7 +21,7 @@ it requests the SDK camera RAW mode instead. This uses the official Demo's
 mode mapping; the app does not add a separate image-remapping pass.
 
 The app is **Synapath PICO Sensors XR**, package `com.synapath.picosensors.openxr`,
-version `0.1.1-sensors-xr.1`. The other apps remain independently installable.
+version `0.1.1-sensors-xr.2`. The other apps remain independently installable.
 It installs alongside both stable and application-encoding experiment apps.
 Stop other camera apps before launching this probe.
 
@@ -143,3 +143,43 @@ This branch is not merged or pushed. The original SDK configuration, MP4
 inspection/copy implementation, calibration parser and Android page XML are
 retained from main. XR changes affect display, touch routing, permission handling
 and preview restoration.
+
+
+## Dual-controller rays and color check — 2026-11-26
+
+Version .2 renders both controller rays in a separate stereo projection layer.
+The lines are thin, faded and softly antialiased; a full line appears when aimed
+at the panel, otherwise only a short 28-cm guide is shown. Hollow landing rings
+use subtle left/right accents. Both controllers remain visible while a press is
+owned by one hand until release, preventing another held trigger from taking over
+a stop hold. Reticles and beams update at XR cadence and never enter SDK MP4 data.
+The user confirmed the refined appearance and operation with either hand.
+
+A fixed-scene comparison used unmodified main's 2D Sensors APK, then this XR APK,
+with the headset held stationary. RGB packet timing was about 60 Hz in both.
+All pose packets were finite and distinct (2D: 9537; XR: 9690), with monotonically
+increasing timestamps and maximum packet gaps of about 1.1 ms. Depth samples
+were 320×240, 153600 bytes each; all 9 XR depth payloads were distinct. Both
+versions dropped to about 1 Hz ToF while stationary, consistent with earlier
+motion/idle tests; this remains an adaptive SDK rate rather than a forced 5 Hz.
+The SDK vendor time base, byte-identical copy and dual calibration checks passed.
+
+Both files reported HEVC Main, yuv420p, limited range, smpte170m matrix, bt709
+transfer and bt470bg primaries. At seconds 3/5/7, aligned valid left-eye pixels
+had RGB mean absolute difference 2.65–2.69 on an 8-bit 0–255 scale; each channel's
+mean offset was below 0.7. This run did not reproduce a large color shift. It is
+one scene, not calibrated colorimetry or an explanation of every earlier clip.
+Recording color processing and SDK camera parameters have not been changed.
+Evidence: `artifacts/rays-color-review/{fixed-2d,fixed-xr}.mp4`, accompanying
+calibrations, `verification.json` and `color-comparison.json` (local, ignored).
+
+For repeatable device tests, debug builds accept an explicit shell broadcast:
+
+```sh
+adb shell am broadcast -a com.synapath.picosensors.openxr.DEBUG_CAPTURE \
+  -p com.synapath.picosensors.openxr --es command record --el duration_ms 10000
+```
+
+The receiver requires the sender's Android DUMP permission and is not registered
+in release builds. It calls the same recording and save functions as the UI and
+stops only its matching recording, with duration constrained to 1–30 seconds.
