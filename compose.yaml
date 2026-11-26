@@ -1,4 +1,4 @@
-name: synapath-pico
+name: synapath-pico-app-pipeline
 services:
   dev:
     image: ${PICO_DEV_IMAGE:-synapath-pico-dev:local}
@@ -19,4 +19,8 @@ services:
       - debug-signing:/root/.android
 volumes:
   gradle-cache:
+    external: true
+    name: synapath-pico_gradle-cache
   debug-signing:
+    external: true
+    name: synapath-pico_debug-signing

@@ -1,41 +1,45 @@
-# Synapath PICO
+# Synapath PICO — application recording experiment
 
-PICO Enterprise 数据采集平台。目录按 Operator 的职责划分组织，当前头显端代码来自已适配 capturelib-0.1.1 的官方 CaptureSDKDemo，是原生 Android/Kotlin 应用。
+Branch: `feature/app-recording-preview`. Separate worktree:
+`../synapath-pico-app-pipeline`. The stable `../synapath-pico` directory and its
+installed application are retained. The stable source snapshot is
+`baseline/sdk-recording-ui3` (af94883).
 
-- `xr/`：头显端 Android 工程，入口为 `app/src/main/java/com/picoxr/capturesdkdemo/MainActivity.kt`。
-- `scripts/`：Docker 构建、设备安装、SDK 校验及视频 PTS 分析。
-- `docker/`：Java 17、Android SDK 35 开发环境。
-- `docs/`：采集配置与数据约定。
-- `third_party/pico/`：本地供应商 AAR，二进制不纳入 Git。
-- `python/`：后续数据处理模块预留位置。
-- `web/`：后续采集数据回看模块预留位置。
+This branch tests a different recording path:
+PXRCapture.startPreview → SurfaceTexture → OpenGL → screen + MediaCodec → MP4.
+It never calls the SDK's startRecord. A single GL thread distributes each SDK
+image to the view and encoder, with no CPU pixel readback. Camera service calls
+use a dedicated HandlerThread.
 
-## 构建
-
-将供应商提供的 `capturelib-0.1.1.aar` 放到 `third_party/pico/`。本机已配置该文件，构建前会校验 SHA-256。
-
-```sh
-make build
-```
-
-首次构建自动创建 Docker 镜像。APK 输出：`artifacts/SynapathPico-CaptureSDK-0.1.1-debug.apk`。
-也可在 Android Studio 中打开 `xr/`，使用 Java 17 与 Android SDK 35 构建。
+The experimental app is **Synapath PICO Pipeline**, package
+`com.synapath.picopipeline`. It installs alongside stable package
+`com.synapath.capturesdkdemo011`. Only one camera application should run at a time.
 
 ```sh
+PICO_DEV_IMAGE=operator-origin-dev:local make build
 make install
-adb shell am start -n com.synapath.capturesdkdemo011/com.picoxr.capturesdkdemo.MainActivity
+adb shell am start -n com.synapath.picopipeline/com.picoxr.capturesdkdemo.pipeline.PipelineActivity
 ```
 
-Mac 的 ADB 负责 USB 安装；Docker 负责编译。多设备时安装可设置 `PICO_SERIAL`。
-安装后应用名为 `Synapath PICO`，界面采用 Operator 风格的 Android 2D 双栏面板，包名保持 `com.synapath.capturesdkdemo011`。
+APK: `artifacts/SynapathPico-AppPipeline-debug.apk`. Vendor AAR remains local in
+`third_party/pico/`, checked against the validated SHA-256 by the build script.
+Build caches and debug signing volume are shared with the stable development
+setup; application source, artifacts, package and Compose project are separate.
 
-## 检查录像
+Recordings are silent AVC MP4 files in
+`/sdcard/Android/data/com.synapath.picopipeline/files/AppPipeline-*.mp4`.
+Each recording also writes `.frames.csv` containing the SDK SurfaceTexture source
+mono timestamp and encoder presentation time. Submitted presentation time is source time
+minus the first selected frame timestamp. The Android MP4 path can smooth small
+interval differences; the CSV remains authoritative for source timing. The recorder selects fresh source
+frames at up to 60 Hz; it does not repeat a texture to fill missing samples.
+A 72 Hz source therefore can yield irregular 60 FPS selection intervals rather
+than artificial constant 16.667 ms exposure timestamps. Frame availability
+notifications may coalesce; no guarantee of receiving every SDK image is made.
 
-录像由 SDK 的 `startRecord` 生成，位于设备 `/sdcard/Movies/DemoPicture-*.mp4`。
-使用 Mac 上的 ADB 拉取文件后，通过本机 ffprobe 检查逐帧时间戳：
+This initial branch validates concurrent preview and video recording. It does
+not yet include audio, session management, production UI, or reliable sustained
+performance guarantees. Hardware validation and PTS inspection are required.
+No result here establishes the physical sensor's exposure frequency.
 
-```sh
-python3 scripts/analyze-video.py /path/to/video.mp4
-```
-
-四段已测录像的文件输出均为 60 FPS，包括重启后的测试。该结果不等同于物理相机曝光频率保证，详情见 [采集基线](docs/capture-baseline.md)。
+Implementation, measured results, and timestamp limitations: [app pipeline](docs/app-pipeline.md).

@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SynapathPico"
+rootProject.name = "SynapathPicoPipeline"
 include(":app")
  
