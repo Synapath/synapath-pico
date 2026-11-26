@@ -12,9 +12,9 @@ import android.view.View
 import android.view.accessibility.AccessibilityEvent
 import kotlin.math.hypot
 
-/** A continuous four-second press, never a short click or a stale delayed action. */
+/** A continuous 2.5-second press, never a short click or a stale delayed action. */
 class HoldToStopView(context: Context, private val stopRecording: () -> Unit, private val progressChanged: () -> Unit = {}) : View(context) {
-    companion object { const val HOLD_MS = 4_000L }
+    companion object { const val HOLD_MS = 2_500L }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val arc = RectF()
     private var pressedAt = -1L
@@ -37,7 +37,7 @@ class HoldToStopView(context: Context, private val stopRecording: () -> Unit, pr
     init {
         isFocusable = true
         isClickable = true
-        contentDescription = "按住圆圈四秒停止并保存，提前松开取消"
+        contentDescription = "按住圆圈2.5 秒停止并保存，提前松开取消"
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         setLayerType(LAYER_TYPE_SOFTWARE, null)
     }
@@ -53,7 +53,7 @@ class HoldToStopView(context: Context, private val stopRecording: () -> Unit, pr
     }
     fun reset() {
         cancelHold(); completed = false
-        contentDescription = "按住圆圈四秒停止并保存，提前松开取消"
+        contentDescription = "按住圆圈2.5 秒停止并保存，提前松开取消"
     }
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {

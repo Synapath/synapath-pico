@@ -11,8 +11,8 @@ android {
         applicationId = "com.synapath.picopipeline.hud"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.1.1-pipeline-hud.2"
+        versionCode = 7
+        versionName = "0.1.1-pipeline-hud.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

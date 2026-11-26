@@ -33,7 +33,7 @@ other runtime.
 ## Stop interaction and state
 
 HoldToStopView uses a monotonic elapsed clock and animation callbacks, requiring
-4000 ms continuous press. Touch, held Enter, Space and D-pad center are handled.
+2500 ms continuous press. Touch, held Enter, Space and D-pad center are handled.
 A short click has no stop action. Released, canceled or out-of-circle pointers,
 multi-touch, detach and window-focus changes cancel an incomplete hold. A
 continuous hasWindowFocus check is intentionally avoided for PICO virtual windows.
@@ -78,3 +78,26 @@ Evidence is local under artifacts/hud-test/, excluded from Git, including videos
 CSV files, verification.json, the decoded frame and Android UI hierarchy captures.
 The unused first attempt's test files are not used to claim successful stopping
 or HUD visibility.
+
+## Version .3 and head-follow investigation
+
+The bottom recording instruction has been removed. The hold threshold is now
+2500 ms; early release still cancels. On-device tests showed a one-second press
+kept recording active, and a 2.8-second press finalized and restored the panel.
+Only the timer was present as visible text in the recording UI hierarchy.
+
+Read-only inspection found firmware PanelAttributes constants for keeping a panel
+in view. A temporary app-local bridge attempted to use ExtWindowManager and a
+separate PICO panel. The device explicitly rejected the API:
+`Accessing hidden method ... ExtWindowManager.getPanelAttributes ... (blocked,
+reflection, denied)`. No hidden-API exemptions or system-wide policy changes were
+applied. The rejected bridge was removed from the shipping source; research
+artifacts stay local under artifacts/head-follow-test/.
+
+The current APK remains a 2D-window HUD, without head-follow behavior. A supported
+head-locked OpenXR layer requires a separate experiment. Keeping PXRCaptureSDK
+as image source does not prove identical timing: a new XR session can change
+system display/camera scheduling and GPU load. PipelineActivity.onPause also
+currently stops the SDK preview and releases the encoder, so an XR-activity
+transition cannot be added blindly. Any new UI backend must preserve capture
+lifecycle and pass an A/B source-PTS/cadence/drop/final-file test before adoption.

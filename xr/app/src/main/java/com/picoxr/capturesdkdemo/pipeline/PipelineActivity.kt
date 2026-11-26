@@ -30,7 +30,6 @@ class PipelineActivity : Activity() {
     private lateinit var mainPanel: LinearLayout
     private lateinit var hud: LinearLayout
     private lateinit var timer: TextView
-    private lateinit var hint: TextView
     private lateinit var stopCircle: HoldToStopView
     private val ui = Handler(Looper.getMainLooper())
     private val cameraThread = HandlerThread("PicoPipelineCamera")
@@ -119,7 +118,7 @@ class PipelineActivity : Activity() {
             text = "录制时隐藏面板，保留透视视野"; setTextColor(Color.WHITE); isChecked = true
         }
         footer.addView(hidePanel)
-        footer.addView(text("关闭此选项可保留边录边预览 · 按住中央圆圈 4 秒停止并保存", 14f))
+        footer.addView(text("关闭此选项可保留边录边预览 · 按住中央圆圈 2.5 秒停止并保存", 14f))
         start = Button(this).apply {
             text = "开始录制"; isEnabled = false
             setOnClickListener {
@@ -140,8 +139,6 @@ class PipelineActivity : Activity() {
         hud.addView(timer, LinearLayout.LayoutParams(-2, -2).apply { bottomMargin = dp(16) })
         stopCircle = HoldToStopView(this, { requestStop() }, { requestHudRefresh() })
         hud.addView(stopCircle, LinearLayout.LayoutParams(dp(88), dp(88)))
-        hint = text("按住圆圈 4 秒停止并保存", 14f).apply { gravity = Gravity.CENTER }
-        hud.addView(hint, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
         root.addView(hud, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         setContentView(root)
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
@@ -150,7 +147,7 @@ class PipelineActivity : Activity() {
     private fun requestStop() {
         if (!recording || saving) return
         saving = true; stopCircle.isEnabled = false
-        hint.text = "正在保存…"; ui.removeCallbacks(timerTick); requestHudRefresh()
+        timer.text = "正在保存…"; ui.removeCallbacks(timerTick); requestHudRefresh()
         Log.i(TAG, "HUD_HOLD_COMPLETED duration_ms=${HoldToStopView.HOLD_MS}")
         gl.queueEvent { renderer.stopRecording() }
     }
@@ -161,7 +158,7 @@ class PipelineActivity : Activity() {
                 starting = false; recording = true; saving = false
                 recordingSince = SystemClock.elapsedRealtime()
                 mainPanel.visibility = if (transparentRecording) View.GONE else View.VISIBLE
-                hud.visibility = View.VISIBLE; hint.text = "按住圆圈 4 秒停止并保存"
+                hud.visibility = View.VISIBLE
                 stopCircle.reset(); stopCircle.isEnabled = true; stopCircle.requestFocus()
                 gl.queueEvent { renderer.setPreviewVisible(!transparentRecording) }
                 ui.removeCallbacks(timerTick); if (active) ui.post(timerTick)
@@ -170,7 +167,7 @@ class PipelineActivity : Activity() {
             }
             PreviewRecorder.RecordingPhase.SAVING -> {
                 saving = true; stopCircle.cancelHold(); stopCircle.isEnabled = false
-                hint.text = "正在保存…"; ui.removeCallbacks(timerTick); requestHudRefresh()
+                timer.text = "正在保存…"; ui.removeCallbacks(timerTick); requestHudRefresh()
             }
             PreviewRecorder.RecordingPhase.SAVED, PreviewRecorder.RecordingPhase.FAILED -> {
                 starting = false; recording = false; saving = false

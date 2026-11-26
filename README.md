@@ -5,22 +5,27 @@ recording experiment at `feature/app-recording-preview` (2d06d6d). The original
 branch and main are retained. This feature has not been merged or pushed.
 
 The app is **Synapath PICO HUD**, package `com.synapath.picopipeline.hud`, version
-`0.1.1-pipeline-hud.2`. It installs alongside the original Pipeline and Sensors
+`0.1.1-pipeline-hud.3`. It installs alongside the original Pipeline and Sensors
 apps. Close other camera apps before opening this one.
 
 ## Recording interaction
 
 - “录制时隐藏面板，保留透视视野” is enabled by default.
 - Starting a recording hides the application panel and camera image from the
-  display. The recording timer, central circular stop control and short hint
-  remain visible over a transparent background.
-- Press and hold the circle continuously for four seconds to stop. A ring shows
+  display. The recording timer, central circular stop control remain visible over a transparent background.
+- Press and hold the circle continuously for 2.5 seconds to stop. A ring shows
   progress. Releasing early cancels; a delivered move outside the circle,
   cancellation, multiple pointers or focus loss also cancels the hold.
 - Saving drains and closes the encoder, then restores the panel and live preview.
 - Unchecking the option retains the preview panel while recording. This preserves
   the earlier simultaneous preview/recording behavior; stopping still uses the
-  four-second circle.
+  2.5-second circle.
+
+The recording HUD has no bottom instruction text in version .3. Head-follow
+behavior is not yet implemented: the controls still occupy the system-managed
+2D window. Firmware 5.15.8 blocks the internal panel-follow interface for ordinary
+apps. A separate OpenXR coexistence experiment is needed before adopting a
+head-locked HUD without regressing camera timing.
 
 The GL input surface stays active when the panel is hidden. The SDK still uses
 one preview stream; the app encodes its camera texture to a separate AVC surface.
