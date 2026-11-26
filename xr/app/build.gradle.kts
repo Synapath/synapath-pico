@@ -11,8 +11,8 @@ android {
         applicationId = "com.synapath.picosensors"
         minSdk = 29
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.1.1-sensors.5"
+        versionCode = 9
+        versionName = "0.1.1-2d.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

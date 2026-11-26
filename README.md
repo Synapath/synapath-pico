@@ -7,8 +7,9 @@ It uses the SDK's original startRecord path. The separate
 
 ## Android 2D interface / 旧版界面
 
-Screenshots of **Synapath PICO Sensors 0.1.1-sensors.5**, the Android 2D
-version on `main`, captured from the PICO application window.
+Screenshots of the Android 2D interface on `main`, captured from the PICO
+application window in version `0.1.1-sensors.5`. The app is now named
+**Synapath PICO**; the interface and capture features are retained.
 
 **双目相机预览 / Stereo camera preview**
 
@@ -38,9 +39,13 @@ the app explicitly sets `KEY_OUTPUT_CAMERA_RAW_DATA=VALUE_FALSE`. Unchecking
 it requests the SDK camera RAW mode instead. This uses the official Demo's
 mode mapping; the app does not add a separate image-remapping pass.
 
-The app is **Synapath PICO Sensors**, package `com.synapath.picosensors`.
-It installs alongside both stable and application-encoding experiment apps.
-Stop other camera apps before launching this probe.
+The retained app is **Synapath PICO**, package `com.synapath.picosensors`,
+version `0.1.1-2d.1`. It updates the former Synapath PICO Sensors in place,
+preserving its permissions and data. The APK is `artifacts/SynapathPico-debug.apk`.
+
+Use this one app on the headset. Future updates should retain the same package
+identity and display name. Historical Demo, Pipeline and OpenXR experiments
+remain available in their Git branches; they are not additional required apps.
 
 ```sh
 PICO_DEV_IMAGE=operator-origin-dev:local make build
