@@ -11,5 +11,5 @@ docker volume create synapath-pico_gradle-cache >/dev/null
 docker volume create synapath-pico_debug-signing >/dev/null
 docker compose run --rm dev bash -c 'cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
 mkdir -p artifacts
-cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-AppPipeline-debug.apk
-printf '%s\n' "$repo_root/artifacts/SynapathPico-AppPipeline-debug.apk"
+cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-RecordingHUD-debug.apk
+printf '%s\n' "$repo_root/artifacts/SynapathPico-RecordingHUD-debug.apk"

@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.synapath.picopipeline"
+        applicationId = "com.synapath.picopipeline.hud"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.1-pipeline.1"
+        versionCode = 6
+        versionName = "0.1.1-pipeline-hud.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

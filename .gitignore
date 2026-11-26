@@ -13,3 +13,5 @@
 /artifacts/
 /data/
 /third_party/pico/*.aar
+
+/xr/.kotlin/
