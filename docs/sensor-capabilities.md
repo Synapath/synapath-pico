@@ -60,9 +60,28 @@ Sources:
 - Public PICO Enterprise API: https://business.picoxr.com/us/doc/EnterpriseAPI-Intro
 - Public PICO wrapper: https://github.com/Pico-Developer/PICO-Unity-Integration-SDK/blob/main/Enterprise/Scripts/PXR_Enterprise.cs
 
-## Pending verification
+## Worn-state comparison: verified
 
-Repeat while physically wearing the headset with passthrough enabled. Measure
-actual depth packet intervals and RGB cadence together. Do not synthesize five
-copies of a 1 Hz depth image to claim 5 Hz. A fixed rate setting or firmware
-requirement must be confirmed if wearing alone does not produce 5 Hz.
+The user confirmed physically wearing the headset with passthrough enabled.
+Second recording: DemoPicture-1795685019340.mp4 (~15.8 seconds):
+
+- RGB: 947 HEVC frames, 2048×768, PTS cadence 59.999999 Hz. Intervals
+  16.666–16.667 ms, no non-increasing PTS.
+- Depth: 76 original raw1 samples, 320×240, all 153600 bytes. PTS cadence
+  4.999807 Hz, median 200.011 ms, range 199.711–200.223 ms, no
+  non-increasing PTS. All 76 payloads have distinct SHA-256 hashes.
+- Head pose: 15521 packets of 56 bytes; all decode to finite 7-double arrays.
+  15519 payloads are distinct, and the last-four-element norms remain near 1.
+  Field ordering/coordinate frames and the distinction between output packet
+  rate and independent tracking updates still need vendor clarification.
+- System logs concurrently reported TOFCamera 5:5 and TOF FRAME RATE CHECK 5 FPS.
+
+This trial meets simultaneous RGB60 + depth5 + head-tagged pose recording on
+this device/firmware while worn. The preceding off-head trial had depth1.
+No SDK fixed-rate setter was added; do not claim this software locks ToF5
+regardless of wearing state. The off-head awake setting does not establish
+that the sensor must retain the worn-state cadence.
+
+Evidence is local under artifacts/sensors-worn/, including source MP4, original
+raw depth samples, raw pose CSV, summary JSON and device log. Depth unit/invalid
+codes and pose coordinate semantics remain separate interpretation work.

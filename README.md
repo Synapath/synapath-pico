@@ -33,6 +33,7 @@ PTS, saves pose payloads as seven raw double columns, and exports depth samples
 without modifying their bytes. Check `summary.json` rather than relying solely
 on configured switches.
 
-Initial off-head test: RGB 60 FPS; head pose present; 320×240 raw depth present
-at about 1 Hz, not the requested target 5 Hz. Wearing-state comparison is needed.
+Verified worn-state test: RGB 60 FPS; head pose present; 320×240 raw depth
+at about 5 Hz (76 distinct samples). The off-head trial produced depth at
+about 1 Hz. This branch does not force ToF to stay at 5 Hz when removed.
 See [SDK capability findings](docs/sensor-capabilities.md).
