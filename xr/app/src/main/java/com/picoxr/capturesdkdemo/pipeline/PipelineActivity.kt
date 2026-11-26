@@ -93,7 +93,7 @@ class PipelineActivity : Activity() {
                 configs[0]!!
             }
         }
-        renderer = PreviewRecorder(gl, { s -> cameraWorker.post { surface = s; openCamera() } },
+        renderer = PreviewRecorder({ gl.requestRender() }, { s -> cameraWorker.post { surface = s; openCamera() } },
             { message -> runOnUiThread { status.text = message; Log.i(TAG, message) } },
             { event -> runOnUiThread { onRecordingEvent(event) } })
         gl.setRenderer(renderer); gl.renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY

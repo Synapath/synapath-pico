@@ -8,11 +8,12 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.synapath.picopipeline.hud"
+        applicationId = "com.synapath.picopipeline.openxr"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.1.1-pipeline-hud.3"
+        versionCode = 8
+        versionName = "0.1.1-openxr.1"
+        ndk { abiFilters += "arm64-v8a" }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -1,60 +1,47 @@
-# Synapath PICO — passthrough recording HUD
+# Synapath PICO — OpenXR head-follow HUD experiment
 
-Branch: `feature/recording-passthrough-hud`, based on the concurrent preview /
-recording experiment at `feature/app-recording-preview` (2d06d6d). The original
-branch and main are retained. This feature has not been merged or pushed.
+Branch: `feature/openxr-headlocked-hud`, based on `047e212` of
+`feature/recording-passthrough-hud`. Main and the working 2D HUD branch are retained.
+This experiment has not been merged or pushed.
 
-The app is **Synapath PICO HUD**, package `com.synapath.picopipeline.hud`, version
-`0.1.1-pipeline-hud.3`. It installs alongside the original Pipeline and Sensors
-apps. Close other camera apps before opening this one.
+**Synapath PICO OpenXR**, package `com.synapath.picopipeline.openxr`, version
+`0.1.1-openxr.1`, installs alongside **Synapath PICO HUD**. Close other camera apps
+before starting it.
 
-## Recording interaction
+OpenXR renders a head-follow timer and stop circle over FB passthrough.
+PXRCaptureSDK remains the RGB source. The app still requests 2048×768 stereo,
+60 FPS, RAW output and encodes fresh SDK textures with the existing MediaCodec
+pipeline. The HUD is absent from saved video. Main's depth/pose/calibration
+implementation is not part of this experimental pipeline branch.
 
-- “录制时隐藏面板，保留透视视野” is enabled by default.
-- Starting a recording hides the application panel and camera image from the
-  display. The recording timer, central circular stop control remain visible over a transparent background.
-- Press and hold the circle continuously for 2.5 seconds to stop. A ring shows
-  progress. Releasing early cancels; a delivered move outside the circle,
-  cancellation, multiple pointers or focus loss also cancels the hold.
-- Saving drains and closes the encoder, then restores the panel and live preview.
-- Unchecking the option retains the preview panel while recording. This preserves
-  the earlier simultaneous preview/recording behavior; stopping still uses the
-  2.5-second circle.
-
-The recording HUD has no bottom instruction text in version .3. Head-follow
-behavior is not yet implemented: the controls still occupy the system-managed
-2D window. Firmware 5.15.8 blocks the internal panel-follow interface for ordinary
-apps. A separate OpenXR coexistence experiment is needed before adopting a
-head-locked HUD without regressing camera timing.
-
-The GL input surface stays active when the panel is hidden. The SDK still uses
-one preview stream; the app encodes its camera texture to a separate AVC surface.
-Only the display receives the HUD. The timer and stop control are not burned into
-recorded video. Camera configuration remains the original pipeline experiment's
-RAW mode, requested 60 FPS and 2048×768 stereo output; this branch does not merge
-main's depth/pose/calibration implementation.
-
-## Build and install
+Aim a controller at the circle and press its trigger to start. While recording,
+hold the trigger on the circle continuously for **2.5 seconds** to save; release
+or move away to cancel a partial hold. No instruction text appears below the
+recording circle. Hand/pinch input is not implemented in this experiment.
 
 ```sh
-PICO_DEV_IMAGE=operator-origin-dev:local make build
-make install
-adb shell pm grant com.synapath.picopipeline.hud android.permission.CAMERA
-adb shell am start -n com.synapath.picopipeline.hud/com.picoxr.capturesdkdemo.pipeline.PipelineActivity
+PICO_DEV_IMAGE=operator-origin-dev:local ./scripts/build-apk.sh
+./scripts/install-apk.sh
+adb shell pm grant com.synapath.picopipeline.openxr android.permission.CAMERA
+adb shell am start -n com.synapath.picopipeline.openxr/com.picoxr.capturesdkdemo.pipeline.OpenXrActivity
 ```
 
-APK: `artifacts/SynapathPico-RecordingHUD-debug.apk`. The vendor AAR stays local in
-`third_party/pico/` and is checked by SHA-256 before building.
+APK: `artifacts/SynapathPico-OpenXR-debug.apk`. The capture AAR and PICO OpenXR
+loader remain local, ignored vendor files; see the [setup instructions](docs/openxr-hud.md).
 
-Silent AVC recordings and their `.frames.csv` source-timestamp companions are in:
+Recordings live under
+`/sdcard/Android/data/com.synapath.picopipeline.openxr/files/OpenXR-*`.
+Keep the MP4, `.frames.csv` and `.source.csv` together. The source CSV records
+all fresh SDK textures observed during recording before encoder selection;
+it does not establish physical sensor exposure rate. Existing Android muxer
+timestamp rounding remains unchanged.
 
-```text
-/sdcard/Android/data/com.synapath.picopipeline.hud/files/AppPipeline-*.mp4
-```
+On PICO Enterprise firmware 5.15.8, the user confirmed head-follow and visible
+passthrough. A 10-second recording contained 601 delivered source frames and
+601 encoded frames, source cadence **59.99748 Hz**, maximum interval 16.66823 ms,
+no intervals over 25 ms. This is a measured device result, not a guarantee for
+other firmware or longer sessions.
 
-The existing application pipeline selects fresh source frames at up to 60 Hz;
-MP4 duration smoothing still applies. Keep the CSV when original source timing
-matters. No physical camera exposure-frequency guarantee is inferred from file FPS.
-
-See [HUD implementation and device tests](docs/recording-hud.md) and the
+See [OpenXR implementation and validation](docs/openxr-hud.md),
+[previous 2D HUD](docs/recording-hud.md), and
 [original pipeline findings](docs/app-pipeline.md).

@@ -9,7 +9,7 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 fi
 docker volume create synapath-pico_gradle-cache >/dev/null
 docker volume create synapath-pico_debug-signing >/dev/null
-docker compose run --rm dev bash -c 'cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
+docker compose run --rm dev bash -c './scripts/build-openxr-native.sh && cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
 mkdir -p artifacts
-cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-RecordingHUD-debug.apk
-printf '%s\n' "$repo_root/artifacts/SynapathPico-RecordingHUD-debug.apk"
+cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-OpenXR-debug.apk
+printf '%s\n' "$repo_root/artifacts/SynapathPico-OpenXR-debug.apk"

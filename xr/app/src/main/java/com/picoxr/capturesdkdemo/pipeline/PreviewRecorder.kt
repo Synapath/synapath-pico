@@ -14,9 +14,10 @@ import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
 /** One SDK SurfaceTexture, two GPU outputs. All methods execute on the GL thread. */
-class PreviewRecorder(private val view: GLSurfaceView, private val ready: (Surface) -> Unit,
+class PreviewRecorder(private val requestRender: () -> Unit, private val ready: (Surface) -> Unit,
                       private val report: (String) -> Unit,
-                      private val recordingEvent: (RecordingEvent) -> Unit = {}) : GLSurfaceView.Renderer {
+                      private val recordingEvent: (RecordingEvent) -> Unit = {},
+                      private val sourceFrame: (Long) -> Unit = {}) : GLSurfaceView.Renderer {
     enum class RecordingPhase { STARTED, SAVING, SAVED, FAILED }
     data class RecordingEvent(val phase: RecordingPhase, val file: File?, val frames: Int = 0, val message: String? = null)
     private var previewVisible = true
@@ -32,11 +33,11 @@ class PreviewRecorder(private val view: GLSurfaceView, private val ready: (Surfa
             hudX=x; hudY=y; hudWidth=bitmap.width; hudHeight=bitmap.height
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, hudTexture)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
-            hudVisible=true; view.requestRender()
+            hudVisible=true; requestRender()
         } finally { bitmap.recycle() }
     }
-    fun hideHudOverlay() { hudVisible=false; view.requestRender() }
-    fun setPreviewVisible(visible: Boolean) { previewVisible = visible; view.requestRender() }
+    fun hideHudOverlay() { hudVisible=false; requestRender() }
+    fun setPreviewVisible(visible: Boolean) { previewVisible = visible; requestRender() }
     companion object { const val WIDTH=2048; const val HEIGHT=768 }
     private var cameraTexture: SurfaceTexture?=null
     private var cameraSurface: Surface?=null
@@ -77,7 +78,7 @@ class PreviewRecorder(private val view: GLSurfaceView, private val ready: (Surfa
         hudVisible=false
         cameraTexture=SurfaceTexture(texture).apply {
             setDefaultBufferSize(WIDTH,HEIGHT)
-            setOnFrameAvailableListener { pending.set(true);view.requestRender() }
+            setOnFrameAvailableListener { pending.set(true);requestRender() }
         }
         cameraSurface=Surface(cameraTexture); ready(cameraSurface!!)
     }
@@ -92,6 +93,7 @@ class PreviewRecorder(private val view: GLSurfaceView, private val ready: (Surfa
         val ts=st.timestamp
         if(fresh && ts>lastSource) {
             lastSource=ts;sourceCount++
+            sourceFrame(ts)
             if(sourceCount%60L==0L) Log.i("PicoPipeline","PREVIEW source_count=$sourceCount source_ns=$ts recording=${encoder!=null}")
             try { encoder?.frame(ts) { draw(WIDTH,HEIGHT,false) } }
             catch(e:Exception) { stopRecording("编码失败：${e.message}") }
