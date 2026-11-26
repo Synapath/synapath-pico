@@ -1,41 +1,82 @@
-# Synapath PICO
+# Synapath PICO — RGB / ToF / head-pose capture
 
-PICO Enterprise 数据采集平台。目录按 Operator 的职责划分组织，当前头显端代码来自已适配 capturelib-0.1.1 的官方 CaptureSDKDemo，是原生 Android/Kotlin 应用。
+The main branch contains the RGB / ToF / head-pose capture implementation,
+developed on `feature/rgb-tof-headpose` from `baseline/sdk-recording-ui3`.
+It uses the SDK's original startRecord path. The separate
+`feature/app-recording-preview` encoder experiment has not been merged.
 
-- `xr/`：头显端 Android 工程，入口为 `app/src/main/java/com/picoxr/capturesdkdemo/MainActivity.kt`。
-- `scripts/`：Docker 构建、设备安装、SDK 校验及视频 PTS 分析。
-- `docker/`：Java 17、Android SDK 35 开发环境。
-- `docs/`：采集配置与数据约定。
-- `third_party/pico/`：本地供应商 AAR，二进制不纳入 Git。
-- `python/`：后续数据处理模块预留位置。
-- `web/`：后续采集数据回看模块预留位置。
+The supplied capturelib-0.1.1.aar exposes three recording switches:
+`KEY_WRITE_DEPTH_DATA`, `KEY_WRITE_POSE_DATA`, and `KEY_WRITE_CAMERA_PARAMS_DATA`.
+This probe enables all three while preserving requested RGB 60 FPS, 2048×768,
+SDK undistorted output by default, 10×1024×1024 bit/s and the baseline
+enhancement settings. In `0.1.1-sensors.4`, “去畸变图像” is checked on launch;
+the app explicitly sets `KEY_OUTPUT_CAMERA_RAW_DATA=VALUE_FALSE`. Unchecking
+it requests the SDK camera RAW mode instead. This uses the official Demo's
+mode mapping; the app does not add a separate image-remapping pass.
 
-## 构建
-
-将供应商提供的 `capturelib-0.1.1.aar` 放到 `third_party/pico/`。本机已配置该文件，构建前会校验 SHA-256。
-
-```sh
-make build
-```
-
-首次构建自动创建 Docker 镜像。APK 输出：`artifacts/SynapathPico-CaptureSDK-0.1.1-debug.apk`。
-也可在 Android Studio 中打开 `xr/`，使用 Java 17 与 Android SDK 35 构建。
+The app is **Synapath PICO Sensors**, package `com.synapath.picosensors`.
+It installs alongside both stable and application-encoding experiment apps.
+Stop other camera apps before launching this probe.
 
 ```sh
+PICO_DEV_IMAGE=operator-origin-dev:local make build
 make install
-adb shell am start -n com.synapath.capturesdkdemo011/com.picoxr.capturesdkdemo.MainActivity
+adb shell pm grant com.synapath.picosensors android.permission.CAMERA
+adb shell pm grant com.synapath.picosensors android.permission.RECORD_AUDIO
+adb shell pm grant com.synapath.picosensors com.picovr.permission.SPATIAL_DATA
+adb shell am start -n com.synapath.picosensors/com.picoxr.capturesdkdemo.MainActivity
 ```
 
-Mac 的 ADB 负责 USB 安装；Docker 负责编译。多设备时安装可设置 `PICO_SERIAL`。
-安装后应用名为 `Synapath PICO`，界面采用 Operator 风格的 Android 2D 双栏面板，包名保持 `com.synapath.capturesdkdemo011`。
+After Stop, version `0.1.1-sensors.3` preserves PXR's existing common timeline
+and publishes `/sdcard/Movies/Synapath/Synapath-*.mp4`. No cropping, timestamp
+shift, remuxing or sample synthesis occurs. The published MP4 is a byte-identical
+copy of the SDK recording, verified by SHA-256 readback before publication.
+Wait for the save confirmation. The SDK file remains in
+`/sdcard/Movies/.SynapathPending/` for traceability.
 
-## 检查录像
+The APK reads original MP4 edit lists and checks RGB/pose/ToF vendor time-base
+fields. Different first-sample times are preserved. Missing sensor tracks or
+inconsistent base fields produce a visible warning, never an invented alignment.
+An audit JSON is saved under the app's external files directory in `timelines/`;
+the MP4 already contains its original vendor timing and needs no sidecar to
+retain the existing track timing. This inspection verifies file-level metadata,
+not physical sensor latency or exposure synchronization.
+See [timestamp findings](docs/timestamp-audit.md).
 
-录像由 SDK 的 `startRecord` 生成，位于设备 `/sdcard/Movies/DemoPicture-*.mp4`。
-使用 Mac 上的 ADB 拉取文件后，通过本机 ffprobe 检查逐帧时间戳：
+Version `0.1.1-sensors.5` shows and exports both calibration sources:
+
+- `raw_camera_calibration`: SDK RAW-mode RGB intrinsics, extrinsics and distortion
+  coefficients for the requested single-eye dimensions. Original packed bytes
+  are preserved as Base64 and little-endian float64 values.
+- `output_image_parameters`: the selected mode's actual SDK calibration callback,
+  including per-camera intrinsics/K and packed extrinsics. It uses no fixed-FOV
+  projection helper. Camera packing and independent physical projection validation
+  remain explicitly distinguished from vendor-reported values.
+
+When undistorted output is selected, startup briefly configures RAW to read its
+calibration, then reopens a fresh capture client in undistorted mode to read the second set.
+Recording stays disabled during the RAW calibration pass. SDK callbacks are
+mode-dependent on firmware 5.15.8; one callback is not mislabelled as both sets.
+The calibration page refreshes after mode changes. Each recording freezes both
+sets at Start and exports `Synapath-<timestamp>.calibration.json` to
+`/sdcard/Download/Synapath/Calibrations/` at Stop, linked to the MP4 SHA-256 and
+vendor timeline base. Manual export writes both sets into one JSON there too.
+The MP4 and its original vendor calibration remain byte-identical to SDK output.
+See [calibration output details](docs/calibration-output.md).
+
+After pulling a recording:
 
 ```sh
-python3 scripts/analyze-video.py /path/to/video.mp4
+python3 scripts/analyze-sensors.py video.mp4 --output artifacts/extracted
 ```
 
-四段已测录像的文件输出均为 60 FPS，包括重启后的测试。该结果不等同于物理相机曝光频率保证，详情见 [采集基线](docs/capture-baseline.md)。
+The script identifies pose MIME from MP4 sample descriptions, summarizes packet
+PTS, saves pose payloads as seven raw double columns, and exports depth samples
+without modifying their bytes. Check `summary.json` rather than relying solely
+on configured switches.
+
+Verified worn-state test: RGB 60 FPS; head pose present; 320×240 raw depth
+at about 5 Hz (76 distinct samples). A stationary off-head trial produced depth
+at about 1 Hz; a later moving off-head trial also reached 5 Hz. Wearing state
+alone does not explain the rate. This branch does not force ToF to stay at 5 Hz.
+See [SDK capability findings](docs/sensor-capabilities.md).
