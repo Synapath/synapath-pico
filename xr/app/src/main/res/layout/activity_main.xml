@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" xmlns:app="http://schemas.android.com/apk/res-auto"
+ android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="#0B1016" android:padding="20dp">
+ <LinearLayout android:layout_width="match_parent" android:layout_height="60dp" android:gravity="center_vertical">
+  <TextView style="@style/CaptureText" android:text="SYNAPATH" android:textSize="23sp" android:textStyle="bold" android:letterSpacing="0.12"/>
+  <TextView style="@style/CaptureMuted" android:text="  /  PICO 数据采集" android:layout_width="0dp" android:layout_weight="1" android:paddingStart="16dp"/>
+  <TextView android:id="@+id/capture_status" style="@style/CaptureText" android:text="连接相机中" android:textColor="#A5D6B3"/>
+ </LinearLayout>
+ <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+  <LinearLayout android:layout_width="210dp" android:layout_height="match_parent" android:layout_marginEnd="16dp" android:orientation="vertical" android:padding="14dp" android:background="@drawable/capture_panel">
+   <TextView style="@style/CaptureText" android:text="采集设置" android:textSize="20sp" android:textStyle="bold" android:layout_marginBottom="20dp"/>
+   <Button android:id="@+id/nav_preview" style="@style/CaptureNav" android:text="相机预览"/>
+   <Button android:id="@+id/nav_output" style="@style/CaptureNav" android:text="输出配置"/>
+   <Button android:id="@+id/nav_calibration" style="@style/CaptureNav" android:text="相机标定"/>
+   <Button android:id="@+id/nav_device" style="@style/CaptureNav" android:text="设备与版本"/>
+   <Space android:layout_width="1dp" android:layout_height="0dp" android:layout_weight="1"/>
+   <TextView style="@style/CaptureMuted" android:text="PICO ENTERPRISE
+PXRCaptureSDK 0.1.1" android:lineSpacingExtra="6dp"/>
+  </LinearLayout>
+  <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:orientation="vertical" android:background="@drawable/capture_panel" android:padding="16dp">
+   <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+    <TextView style="@style/CaptureText" android:text="双目相机" android:textSize="19sp" android:textStyle="bold" android:layout_width="0dp" android:layout_weight="1"/>
+    <Button android:id="@+id/btn_start_preview" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="开启预览"/>
+    <Button android:id="@+id/btn_stop_preview" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:layout_marginStart="8dp" android:text="关闭预览"/>
+   </LinearLayout>
+   <androidx.constraintlayout.widget.ConstraintLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1.2" android:layout_marginTop="8dp" android:background="#000000">
+    <SurfaceView android:id="@+id/surfaceView" android:layout_width="0dp" android:layout_height="0dp" app:layout_constraintDimensionRatio="8:3" app:layout_constraintTop_toTopOf="parent" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
+    <TextView android:id="@+id/preview_message" android:layout_width="0dp" android:layout_height="0dp" android:gravity="center" android:text="相机预览" android:textSize="18sp" android:textColor="#B9C8D5" android:background="#0B1016" app:layout_constraintTop_toTopOf="parent" app:layout_constraintBottom_toBottomOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintEnd_toEndOf="parent"/>
+   </androidx.constraintlayout.widget.ConstraintLayout>
+   <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:layout_marginTop="12dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+     <LinearLayout android:id="@+id/page_preview" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+      <TextView style="@style/CaptureText" android:text="第一视角记录" android:textSize="20sp" android:layout_marginBottom="10dp"/>
+      <TextView style="@style/CaptureMuted" android:text="左右目拼接预览 · 保持原始比例
+录像时显示计时状态，停止保存后自动恢复预览。" android:lineSpacingExtra="7dp"/>
+     </LinearLayout>
+     <LinearLayout android:id="@+id/page_output" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+      <TextView style="@style/CaptureText" android:text="视频输出" android:textSize="20sp" android:layout_marginBottom="10dp"/>
+      <TextView style="@style/CaptureText" android:text="请求帧率  60 FPS       分辨率  2048 × 768
+码率  10 Mi bit/s       编码模式  双目拼接" android:lineSpacingExtra="8dp"/>
+      <CheckBox android:id="@+id/check_box" android:layout_width="wrap_content" android:layout_height="48dp" android:text="反畸变图像" android:textColor="#EAF0F5"/>
+      <TextView style="@style/CaptureMuted" android:text="默认 RAW 模式。此处显示请求配置，实际帧率以录像文件检查为准。"/>
+     </LinearLayout>
+     <LinearLayout android:id="@+id/page_calibration" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+      <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:orientation="horizontal">
+      <Button android:id="@+id/btn_get_camera_param" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="读取相机内外参"/>
+      <Button android:id="@+id/btn_export_calibration" style="@style/CaptureButton" android:layout_width="wrap_content" android:layout_height="48dp" android:text="导出完整精度 JSON" android:enabled="false" android:layout_marginStart="12dp"/>
+      </LinearLayout>
+      <TextView android:id="@+id/tv_camera_param" style="@style/CaptureText" android:layout_width="match_parent" android:text="点击读取以查看 SDK 返回值" android:textSize="13sp" android:textIsSelectable="true"/>
+      <LinearLayout android:id="@+id/calibration_cards" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="12dp"/>
+     </LinearLayout>
+     <LinearLayout android:id="@+id/page_device" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+      <TextView style="@style/CaptureText" android:text="设备与版本" android:textSize="20sp" android:layout_marginBottom="10dp"/>
+      <TextView android:id="@+id/device_info" style="@style/CaptureText" android:lineSpacingExtra="7dp"/>
+     </LinearLayout>
+    </LinearLayout>
+   </ScrollView>
+  </LinearLayout>
+ </LinearLayout>
+ <LinearLayout android:layout_width="match_parent" android:layout_height="72dp" android:gravity="center_vertical" android:paddingTop="12dp">
+  <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical">
+   <TextView android:id="@+id/session_status" style="@style/CaptureText" android:text="准备就绪"/>
+   <TextView android:id="@+id/session_path" style="@style/CaptureMuted" android:text="保存位置  /sdcard/Movies/" android:maxLines="1" android:ellipsize="middle"/>
+  </LinearLayout>
+  <Button android:id="@+id/btn_capture" style="@style/CaptureButton" android:layout_width="110dp" android:layout_height="52dp" android:text="拍照" android:layout_marginEnd="12dp"/>
+  <Button android:id="@+id/btn_start_record" android:layout_width="170dp" android:layout_height="52dp" android:text="开始录制" android:textSize="16sp" android:textColor="#131820" app:backgroundTint="#EAAE50"/>
+  <Button android:id="@+id/btn_stop_record" android:layout_width="170dp" android:layout_height="52dp" android:text="停止并保存" android:textSize="16sp" android:visibility="gone" app:backgroundTint="#CC5353" android:textColor="#FFFFFF"/>
+ </LinearLayout>
+</LinearLayout>

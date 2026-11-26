@@ -1,0 +1,22 @@
+name: synapath-pico
+services:
+  dev:
+    image: ${PICO_DEV_IMAGE:-synapath-pico-dev:local}
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: docker/dev/Dockerfile
+    init: true
+    user: "0:0"
+    entrypoint: []
+    working_dir: /workspace/synapath-pico
+    environment:
+      GRADLE_USER_HOME: /gradle-cache
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.vfs.watch=false
+    volumes:
+      - .:/workspace/synapath-pico
+      - gradle-cache:/gradle-cache
+      - debug-signing:/root/.android
+volumes:
+  gradle-cache:
+  debug-signing:

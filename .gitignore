@@ -1,0 +1,15 @@
+.DS_Store
+.idea/
+*.iml
+**/.gradle/
+**/build/
+**/local.properties
+**/.cxx/
+**/.externalNativeBuild/
+**/__pycache__/
+**/.venv/
+**/node_modules/
+.env
+/artifacts/
+/data/
+/third_party/pico/*.aar

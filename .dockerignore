@@ -1,0 +1,10 @@
+.git
+**/.gradle
+**/build
+**/.idea
+**/local.properties
+**/node_modules
+**/.venv
+third_party/pico/*.aar
+artifacts
+data
