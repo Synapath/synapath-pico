@@ -9,5 +9,5 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 fi
 docker compose run --rm dev bash -c 'cd xr && ./gradlew :app:assembleDebug --no-daemon --console=plain'
 mkdir -p artifacts
-cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-CaptureSDK-0.1.1-debug.apk
-printf '%s\n' "$repo_root/artifacts/SynapathPico-CaptureSDK-0.1.1-debug.apk"
+cp xr/app/build/outputs/apk/debug/app-debug.apk artifacts/SynapathPico-Sensors-debug.apk
+printf '%s\n' "$repo_root/artifacts/SynapathPico-Sensors-debug.apk"

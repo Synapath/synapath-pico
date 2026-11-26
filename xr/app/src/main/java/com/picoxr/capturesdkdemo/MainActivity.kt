@@ -280,6 +280,9 @@ class MainActivity : AppCompatActivity() {
         val configureParams = mutableMapOf(
             PXRCapture.KEY_ENABLE_MVHEVC to PXRCapture.VALUE_FALSE,
             PXRCapture.KEY_VIDEO_FPS to  "60",
+            PXRCapture.KEY_WRITE_DEPTH_DATA to PXRCapture.VALUE_TRUE,
+            PXRCapture.KEY_WRITE_POSE_DATA to PXRCapture.VALUE_TRUE,
+            PXRCapture.KEY_WRITE_CAMERA_PARAMS_DATA to PXRCapture.VALUE_TRUE,
             PXRCapture.KEY_VIDEO_WIDTH to "2048",
             PXRCapture.KEY_VIDEO_HEIGHT to "${1536/2}",
             PXRCapture.KEY_VIDEO_BITRATE to "${10 * 1024 * 1024}",
