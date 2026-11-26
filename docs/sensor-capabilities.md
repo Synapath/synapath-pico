@@ -85,3 +85,36 @@ that the sensor must retain the worn-state cadence.
 Evidence is local under artifacts/sensors-worn/, including source MP4, original
 raw depth samples, raw pose CSV, summary JSON and device log. Depth unit/invalid
 codes and pose coordinate semantics remain separate interpretation work.
+
+## Shared-origin dataset export
+
+`scripts/export-aligned.py` implements local post-recording dataset export.
+It preserves the original MP4 byte-for-byte and keeps original per-track PTS,
+exports raw depth and pose, and adds aligned timeline CSVs and an RGB association
+CSV. Every track subtracts the same origin: maximum of the first three sample
+PTS. The common-valid window ends at the earliest last-sample PTS.
+
+For DemoPicture-1795685543469.mp4, the origin is 0.614 s; 852 of 891 RGB
+samples fall in the common-valid interval. The original video remains complete;
+37 leading and 2 trailing RGB samples are excluded from associations only.
+Aligned times for pre-overlap samples are negative and are retained in each
+raw timeline CSV rather than silently deleted. No track is independently reset
+to zero and no sample PTS is rewritten in the original video.
+
+Head pose is matched to the nearest original sample with a default maximum
+5 ms difference; ToF uses the most recent sample not newer than the RGB frame
+and defaults to 250 ms maximum age. Matches beyond tolerance are explicitly
+flagged invalid. The off-head 1 Hz test correctly produces invalid/stale depth
+matches under that threshold. These are time-validity flags, not proof that
+pose coordinates or depth pixels are physically valid.
+
+```sh
+python3 scripts/export-aligned.py video.mp4 --output artifacts/aligned-session
+```
+
+The output is self-contained: capture.mp4, original raw samples, original and
+aligned timestamp tables, rgb-associations.csv and manifest.json. This currently
+runs on the Mac with ffprobe; it is not yet wired into an Android stop-record /
+one-click export action. Pose interpolation is deliberately omitted pending
+confirmation of quaternion ordering and coordinate semantics. Temporal
+association does not calibrate sensor latency or establish exposure sync.
