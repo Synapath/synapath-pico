@@ -5,6 +5,30 @@ developed on `feature/rgb-tof-headpose` from `baseline/sdk-recording-ui3`.
 It uses the SDK's original startRecord path. The separate
 `feature/app-recording-preview` encoder experiment has not been merged.
 
+## Android 2D interface / 旧版界面
+
+Screenshots of **Synapath PICO Sensors 0.1.1-sensors.5**, the Android 2D
+version on `main`, captured from the PICO application window.
+
+**双目相机预览 / Stereo camera preview**
+
+![旧版 Android 2D 主界面：双目相机预览、采集导航与录制控制](docs/images/android-2d-preview.png)
+
+<details>
+<summary>输出配置与相机标定 / Output settings and calibration</summary>
+
+**输出配置 / Output settings**
+
+![旧版 Android 2D 输出配置：60 FPS、2048×768 与默认去畸变选项](docs/images/android-2d-output.png)
+
+**相机标定 / Camera calibration**
+
+![旧版 Android 2D 相机标定页面：读取与导出原始标定和输出参数](docs/images/android-2d-calibration.png)
+
+</details>
+
+## Capture configuration
+
 The supplied capturelib-0.1.1.aar exposes three recording switches:
 `KEY_WRITE_DEPTH_DATA`, `KEY_WRITE_POSE_DATA`, and `KEY_WRITE_CAMERA_PARAMS_DATA`.
 This probe enables all three while preserving requested RGB 60 FPS, 2048×768,
