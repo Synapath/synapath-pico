@@ -32,7 +32,7 @@ PXRCaptureSDK 0.1.1" android:lineSpacingExtra="6dp"/>
      <LinearLayout android:id="@+id/page_preview" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
       <TextView style="@style/CaptureText" android:text="第一视角记录" android:textSize="20sp" android:layout_marginBottom="10dp"/>
       <TextView style="@style/CaptureMuted" android:text="左右目拼接预览 · 保持原始比例
-录像时显示计时状态，停止保存后自动恢复预览。" android:lineSpacingExtra="7dp"/>
+录像时隐藏面板，显示计时和停止圆圈；长按圆圈 2.5 秒保存并恢复预览。" android:lineSpacingExtra="7dp"/>
      </LinearLayout>
      <LinearLayout android:id="@+id/page_output" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
       <TextView style="@style/CaptureText" android:text="视频输出" android:textSize="20sp" android:layout_marginBottom="10dp"/>

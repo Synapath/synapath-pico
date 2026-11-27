@@ -3,7 +3,10 @@
         <item name="colorPrimary">#EAAE50</item>
         <item name="colorOnPrimary">#131820</item>
         <item name="colorSurface">#121820</item>
-        <item name="android:windowBackground">#0B1016</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDisablePreview">true</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:statusBarColor">#0B1016</item>
         <item name="android:navigationBarColor">#0B1016</item>

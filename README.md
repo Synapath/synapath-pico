@@ -40,8 +40,14 @@ it requests the SDK camera RAW mode instead. This uses the official Demo's
 mode mapping; the app does not add a separate image-remapping pass.
 
 The retained app is **Synapath PICO**, package `com.synapath.picosensors`,
-version `0.1.1-2d.1`. It updates the former Synapath PICO Sensors in place,
+version `0.1.1-2d.2`. It updates the former Synapath PICO Sensors in place,
 preserving its permissions and data. The APK is `artifacts/SynapathPico-debug.apk`.
+
+录制开始后主面板隐藏，透明窗口中只显示计时和中央停止圆圈；连续按住圆圈
+**2.5 秒**停止并保存，提前松开或移出圆圈取消长按。保存完成后恢复主面板和预览。
+这是固定位置的 Android 2D 窗口，不随头部移动。界面移植自
+`feature/recording-passthrough-hud`，继续使用当前 SDK 直录管线，保留 RGB、ToF、
+Head Pose、共同时间轴校验与两套标定导出；计时和圆圈不会写入相机录像。
 
 Use this one app on the headset. Future updates should retain the same package
 identity and display name. Historical Demo, Pipeline and OpenXR experiments

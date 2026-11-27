@@ -1,5 +1,6 @@
 package com.picoxr.capturesdkdemo
 
+import com.picoxr.capturesdkdemo.hud.RecordingHud
 import android.Manifest
 import android.media.ImageReader
 import android.os.Bundle
@@ -37,6 +38,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var recordingHud: RecordingHud
     private lateinit var imageReader: ImageReader
 
     @Volatile private var pxrCapture: PXRCapture? = null
@@ -60,6 +62,7 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var finalizing = false
 
     private fun renderFinalizing() {
+        recordingHud.showSaving()
         findViewById<TextView>(R.id.preview_message).apply {
             visibility = View.VISIBLE
             text = "正在保存 RGB / ToF / Pose\n保留相机原始时间轴，完成后自动恢复预览"
@@ -86,6 +89,7 @@ class MainActivity : AppCompatActivity() {
     private val recordingTimer = object : Runnable {
         override fun run() {
             if (recordingSince == 0L) return
+            recordingHud.updateTime(recordingSince)
             val elapsed = (SystemClock.elapsedRealtime() - recordingSince) / 1000
             findViewById<TextView>(R.id.session_status).text =
                 "正在录制  %02d:%02d".format(elapsed / 60, elapsed % 60)
@@ -151,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         btnGetCameraParam.isEnabled = ready
         if (recording && recordingSince == 0L) {
             recordingSince = SystemClock.elapsedRealtime()
+            recordingHud.showRecording()
             uiHandler.post(recordingTimer)
         } else if (!recording && recordingSince != 0L) {
             recordingSince = 0L
@@ -162,7 +167,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        val panel = layoutInflater.inflate(R.layout.activity_main, null)
+        recordingHud = RecordingHud(this, panel) { stopRecord() }
+        setContentView(recordingHud.root)
         Log.i(TAG, "onCreate")
         surfaceView = findViewById(R.id.surfaceView)
         // Keep the SDK render target aligned and independent from fractional
@@ -293,6 +300,7 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TAG, "captureOnError state: $error")
                 runOnUiThread {
                     recordingSince = 0L
+                    recordingHud.hide()
                     uiHandler.removeCallbacks(recordingTimer)
                     findViewById<TextView>(R.id.capture_status).text = "相机错误 $error"
                     findViewById<TextView>(R.id.session_status).text = "采集失败，请重新打开应用"
@@ -509,7 +517,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecord(){
-        if (probingOriginalCalibration) return
+        if (probingOriginalCalibration || finalizing || pendingRecordPath.isNotEmpty()) return
         getCameraParams()
         val snapshot = calibrationJson
         if (snapshot == null || !snapshot.getJSONObject("raw_camera_calibration").optBoolean("available") ||
@@ -593,6 +601,7 @@ class MainActivity : AppCompatActivity() {
                 pendingRecordPath = ""
                 finalizing = false
                 runOnUiThread {
+                    restoreRecordingPanel()
                     renderCaptureState(captureState)
                     findViewById<TextView>(R.id.session_path).text = "/sdcard/Movies/Synapath/$finalName"
                     findViewById<TextView>(R.id.session_status).text =
@@ -606,12 +615,22 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "Save verification failed; original retained at $source", error)
                 finalizing = false
                 runOnUiThread {
+                    restoreRecordingPanel()
                     renderCaptureState(captureState)
                     findViewById<TextView>(R.id.session_status).text = "校验保存失败，原始录像已保留：${error.message}"
                     findViewById<TextView>(R.id.session_path).text = source.absolutePath
                 }
             }
         }
+    }
+
+    private fun restoreRecordingPanel() {
+        recordingHud.hide()
+        // Restoring the hidden panel recreates its SDK preview SurfaceView.
+        uiHandler.postDelayed({
+            if (!isDestroyed && !finalizing && recordingSince == 0L &&
+                captureState == PXRCapture.PXRCaptureState.CAPTURE_STATE_CONFIGURED.ordinal) startPreview()
+        }, 300)
     }
 
     private fun startPreview(){
@@ -633,6 +652,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         uiHandler.removeCallbacksAndMessages(null)
+        recordingHud.release()
         finalizeWorker.shutdown()
         super.onDestroy()
     }
